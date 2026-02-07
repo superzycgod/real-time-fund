@@ -2438,8 +2438,25 @@ export default function HomePage() {
       if (session.expires_at && session.expires_at * 1000 <= Date.now()) {
         isLoggingOutRef.current = true;
         await supabase.auth.signOut({ scope: 'local' });
+        try {
+          const storageKeys = Object.keys(localStorage);
+          storageKeys.forEach((key) => {
+            if (key === 'supabase.auth.token' || (key.startsWith('sb-') && key.endsWith('-auth-token'))) {
+              localStorage.removeItem(key);
+            }
+          });
+        } catch { }
+        try {
+          const sessionKeys = Object.keys(sessionStorage);
+          sessionKeys.forEach((key) => {
+            if (key === 'supabase.auth.token' || (key.startsWith('sb-') && key.endsWith('-auth-token'))) {
+              sessionStorage.removeItem(key);
+            }
+          });
+        } catch { }
         clearAuthState();
         setLoginError('会话已过期，请重新登录');
+        showToast('会话已过期，请重新登录', 'error');
         setLoginModalOpen(true);
         return;
       }
@@ -2564,17 +2581,39 @@ export default function HomePage() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        const { error } = await supabase.auth.signOut();
+        const { error } = await supabase.auth.signOut({ scope: 'local' });
         if (error && error.code !== 'session_not_found') {
           throw error;
         }
       }
     } catch (err) {
+      showToast(err.message, 'error')
       console.error('登出失败', err);
     } finally {
       try {
         await supabase.auth.signOut({ scope: 'local' });
       } catch { }
+      try {
+        const storageKeys = Object.keys(localStorage);
+        storageKeys.forEach((key) => {
+          if (key === 'supabase.auth.token' || (key.startsWith('sb-') && key.endsWith('-auth-token'))) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch { }
+      try {
+        const sessionKeys = Object.keys(sessionStorage);
+        sessionKeys.forEach((key) => {
+          if (key === 'supabase.auth.token' || (key.startsWith('sb-') && key.endsWith('-auth-token'))) {
+            sessionStorage.removeItem(key);
+          }
+        });
+      } catch { }
+      setLoginModalOpen(false);
+      setLoginError('');
+      setLoginSuccess('');
+      setLoginEmail('');
+      setLoginOtp('');
       setUserMenuOpen(false);
       setUser(null);
     }
