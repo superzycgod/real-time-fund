@@ -412,3 +412,88 @@ export const submitFeedback = async (formData) => {
   });
   return response.json();
 };
+
+let historyQueue = Promise.resolve();
+
+export const fetchFundHistory = async (code, range = '1m') => {
+  if (typeof window === 'undefined') return [];
+
+  const end = nowInTz();
+  let start = end.clone();
+
+  switch (range) {
+    case '1m': start = start.subtract(1, 'month'); break;
+    case '3m': start = start.subtract(3, 'month'); break;
+    case '6m': start = start.subtract(6, 'month'); break;
+    case '1y': start = start.subtract(1, 'year'); break;
+    case '3y': start = start.subtract(3, 'year'); break;
+    default: start = start.subtract(1, 'month');
+  }
+
+  const sdate = start.format('YYYY-MM-DD');
+  const edate = end.format('YYYY-MM-DD');
+  const per = 49;
+
+  return new Promise((resolve) => {
+    historyQueue = historyQueue.then(async () => {
+      let allData = [];
+      let page = 1;
+      let totalPages = 1;
+
+      try {
+        const parseContent = (content) => {
+            if (!content) return [];
+            const rows = content.split('<tr>');
+            const data = [];
+            for (const row of rows) {
+                const cells = row.match(/<td[^>]*>(.*?)<\/td>/g);
+                if (cells && cells.length >= 2) {
+                    const dateStr = cells[0].replace(/<[^>]+>/g, '').trim();
+                    const valStr = cells[1].replace(/<[^>]+>/g, '').trim();
+                    const val = parseFloat(valStr);
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr) && !isNaN(val)) {
+                        data.push({ date: dateStr, value: val });
+                    }
+                }
+            }
+            return data;
+        };
+
+        // Fetch first page to get metadata
+        const firstUrl = `https://fundf10.eastmoney.com/F10DataApi.aspx?type=lsjz&code=${code}&page=${page}&per=${per}&sdate=${sdate}&edate=${edate}`;
+        await loadScript(firstUrl);
+        
+        if (!window.apidata || !window.apidata.content || window.apidata.content.includes('暂无数据')) {
+          resolve([]);
+          return;
+        }
+
+        // Parse total pages
+        if (window.apidata.pages) {
+            totalPages = parseInt(window.apidata.pages, 10) || 1;
+        }
+
+        allData = allData.concat(parseContent(window.apidata.content));
+
+        // Fetch remaining pages
+        for (page = 2; page <= totalPages; page++) {
+             const nextUrl = `https://fundf10.eastmoney.com/F10DataApi.aspx?type=lsjz&code=${code}&page=${page}&per=${per}&sdate=${sdate}&edate=${edate}`;
+             await loadScript(nextUrl);
+             if (window.apidata && window.apidata.content) {
+                 allData = allData.concat(parseContent(window.apidata.content));
+             }
+        }
+
+        // The data comes in reverse chronological order (newest first), so we need to reverse it for the chart (oldest first)
+        resolve(allData.reverse());
+
+      } catch (e) {
+        console.error('Fetch history error:', e);
+        resolve([]);
+      }
+    }).catch((e) => {
+       console.error('Queue error:', e);
+       resolve([]);
+    });
+  });
+};

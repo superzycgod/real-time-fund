@@ -9,6 +9,7 @@ import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import Announcement from "./components/Announcement";
 import { DatePicker, DonateTabs, NumericInput, Stat } from "./components/Common";
+import FundTrendChart from "./components/FundTrendChart";
 import { ChevronIcon, CloseIcon, CloudIcon, DragIcon, ExitIcon, EyeIcon, EyeOffIcon, GridIcon, ListIcon, LoginIcon, LogoutIcon, MailIcon, PinIcon, PinOffIcon, PlusIcon, RefreshIcon, SettingsIcon, SortIcon, StarIcon, TrashIcon, UpdateIcon, UserIcon } from "./components/Icons";
 import weChatGroupImg from "./assets/weChatGroup.png";
 import { supabase, isSupabaseConfigured } from './lib/supabase';
@@ -1903,6 +1904,7 @@ export default function HomePage() {
 
   // 收起/展开状态
   const [collapsedCodes, setCollapsedCodes] = useState(new Set());
+  const [collapsedTrends, setCollapsedTrends] = useState(new Set()); // New state for collapsed trend charts
 
   // 自选状态
   const [favorites, setFavorites] = useState(new Set());
@@ -1925,9 +1927,14 @@ export default function HomePage() {
   const [lastSyncTime, setLastSyncTime] = useState(null);
 
   useEffect(() => {
+    // 优先使用服务端返回的时间，如果没有则使用本地存储的时间
+    // 这里只设置初始值，后续更新由接口返回的时间驱动
     const stored = window.localStorage.getItem('localUpdatedAt');
     if (stored) {
       setLastSyncTime(stored);
+    } else {
+      // 如果没有存储的时间，暂时设为 null，等待接口返回
+      setLastSyncTime(null);
     }
   }, []);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -2484,7 +2491,7 @@ export default function HomePage() {
   }, []);
 
   const storageHelper = useMemo(() => {
-    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'refreshMs', 'holdings', 'pendingTrades', 'viewMode']);
+    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'collapsedTrends', 'refreshMs', 'holdings', 'pendingTrades', 'viewMode']);
     const triggerSync = (key, prevValue, nextValue) => {
       if (keys.has(key)) {
         if (key === 'funds') {
@@ -2527,7 +2534,7 @@ export default function HomePage() {
   }, [getFundCodesSignature, scheduleSync]);
 
   useEffect(() => {
-    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'refreshMs', 'holdings', 'pendingTrades', 'viewMode']);
+    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'collapsedTrends', 'refreshMs', 'holdings', 'pendingTrades', 'viewMode']);
     const onStorage = (e) => {
       if (!e.key) return;
       if (e.key === 'localUpdatedAt') {
@@ -2578,6 +2585,19 @@ export default function HomePage() {
       }
       // 同步到本地存储
       storageHelper.setItem('collapsedCodes', JSON.stringify(Array.from(next)));
+      return next;
+    });
+  };
+
+  const toggleTrendCollapse = (code) => {
+    setCollapsedTrends(prev => {
+      const next = new Set(prev);
+      if (next.has(code)) {
+        next.delete(code);
+      } else {
+        next.add(code);
+      }
+      storageHelper.setItem('collapsedTrends', JSON.stringify(Array.from(next)));
       return next;
     });
   };
@@ -2688,6 +2708,11 @@ export default function HomePage() {
       if (Array.isArray(savedCollapsed)) {
         setCollapsedCodes(new Set(savedCollapsed));
       }
+      // 加载业绩走势收起状态
+      const savedTrends = JSON.parse(localStorage.getItem('collapsedTrends') || '[]');
+      if (Array.isArray(savedTrends)) {
+        setCollapsedTrends(new Set(savedTrends));
+      }
       // 加载自选状态
       const savedFavorites = JSON.parse(localStorage.getItem('favorites') || '[]');
       if (Array.isArray(savedFavorites)) {
@@ -2781,6 +2806,8 @@ export default function HomePage() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // INITIAL_SESSION 会由 getSession() 主动触发，这里不再重复处理
+      if (event === 'INITIAL_SESSION') return;
       await handleSession(session ?? null, event);
     });
 
@@ -3172,6 +3199,15 @@ export default function HomePage() {
       return nextSet;
     });
 
+    // 同步删除业绩走势收起状态
+    setCollapsedTrends(prev => {
+      if (!prev.has(removeCode)) return prev;
+      const nextSet = new Set(prev);
+      nextSet.delete(removeCode);
+      storageHelper.setItem('collapsedTrends', JSON.stringify(Array.from(nextSet)));
+      return nextSet;
+    });
+
     // 同步删除自选状态
     setFavorites(prev => {
       if (!prev.has(removeCode)) return prev;
@@ -3240,6 +3276,10 @@ export default function HomePage() {
       ? Array.from(new Set(payload.collapsedCodes.map(normalizeCode).filter((code) => uniqueFundCodes.includes(code)))).sort()
       : [];
 
+    const collapsedTrends = Array.isArray(payload.collapsedTrends)
+      ? Array.from(new Set(payload.collapsedTrends.map(normalizeCode).filter((code) => uniqueFundCodes.includes(code)))).sort()
+      : [];
+
     const groups = Array.isArray(payload.groups)
       ? payload.groups
           .map((group) => {
@@ -3304,6 +3344,7 @@ export default function HomePage() {
       favorites,
       groups,
       collapsedCodes,
+      collapsedTrends,
       refreshMs: Number.isFinite(payload.refreshMs) ? payload.refreshMs : 30000,
       holdings,
       pendingTrades,
@@ -3317,6 +3358,7 @@ export default function HomePage() {
       const favorites = JSON.parse(localStorage.getItem('favorites') || '[]');
       const groups = JSON.parse(localStorage.getItem('groups') || '[]');
       const collapsedCodes = JSON.parse(localStorage.getItem('collapsedCodes') || '[]');
+      const collapsedTrends = JSON.parse(localStorage.getItem('collapsedTrends') || '[]');
       const viewMode = localStorage.getItem('viewMode') === 'list' ? 'list' : 'card';
       const fundCodes = new Set(
         Array.isArray(funds)
@@ -3355,6 +3397,9 @@ export default function HomePage() {
       const cleanedCollapsed = Array.isArray(collapsedCodes)
         ? collapsedCodes.filter((code) => fundCodes.has(code))
         : [];
+      const cleanedCollapsedTrends = Array.isArray(collapsedTrends)
+        ? collapsedTrends.filter((code) => fundCodes.has(code))
+        : [];
       const cleanedGroups = Array.isArray(groups)
         ? groups.map((group) => ({
           ...group,
@@ -3371,6 +3416,7 @@ export default function HomePage() {
         favorites: cleanedFavorites,
         groups: cleanedGroups,
         collapsedCodes: cleanedCollapsed,
+        collapsedTrends: cleanedCollapsedTrends,
         refreshMs: parseInt(localStorage.getItem('refreshMs') || '30000', 10),
         holdings: cleanedHoldings,
         pendingTrades: cleanedPendingTrades,
@@ -3397,7 +3443,7 @@ export default function HomePage() {
     skipSyncRef.current = true;
     try {
       if (cloudUpdatedAt) {
-        storageHelper.setItem('localUpdatedAt', toTz(cloudUpdatedAt).toISOString());
+        storageHelper.setItem('localUpdatedAt', cloudUpdatedAt);
       }
       const nextFunds = Array.isArray(cloudData.funds) ? dedupeByCode(cloudData.funds) : [];
       setFunds(nextFunds);
@@ -4763,6 +4809,11 @@ export default function HomePage() {
                                     </motion.div>
                                   )}
                                 </AnimatePresence>
+                                <FundTrendChart 
+                                  code={f.code} 
+                                  isExpanded={!collapsedTrends.has(f.code)}
+                                  onToggleExpand={() => toggleTrendCollapse(f.code)}
+                                />
                               </>
                             )}
                           </motion.div>
