@@ -23,7 +23,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create .env.local
+      - name: Create .env
         run: |
           cat << 'EOF' > .env.local
           NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
@@ -65,9 +65,9 @@ jobs:
           # 多平台构建（可选）
           platforms: linux/amd64,linux/arm64
           # 构建参数（传递 NEXT_PUBLIC_ 变量）
-          #build-args: |
-          #  NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
-          #  NEXT_PUBLIC_SITE_NAME=${{ vars.NEXT_PUBLIC_SITE_NAME }}
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           # 缓存优化（大幅加速后续构建）
           cache-from: type=gha
           cache-to: type=gha,mode=max
