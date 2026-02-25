@@ -432,7 +432,10 @@ export const fetchShanghaiIndexDate = async () => {
 };
 
 export const fetchLatestRelease = async () => {
-  const res = await fetch('https://api.github.com/repos/hzm0321/real-time-fund/releases/latest');
+  const url = process.env.NEXT_PUBLIC_GITHUB_LATEST_RELEASE_URL;
+  if (!url) return null;
+
+  const res = await fetch(url);
   if (!res.ok) return null;
   const data = await res.json();
   return {
@@ -447,6 +450,72 @@ export const submitFeedback = async (formData) => {
     body: formData
   });
   return response.json();
+};
+
+// 使用智谱 GLM 从 OCR 文本中抽取基金名称
+export const extractFundNamesWithLLM = async (ocrText) => {
+  const apiKey = '8df8ccf74a174722847c83b7e222f2af.4A39rJvUeBVDmef1';
+  if (!apiKey || !ocrText) return [];
+
+  try {
+    const models = ['glm-4.5-flash', 'glm-4.7-flash'];
+    const model = models[Math.floor(Math.random() * models.length)];
+
+    const resp = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content:
+              '你是一个基金 OCR 文本解析助手。' +
+              '从下面的 OCR 文本中抽取其中出现的「基金名称列表」。' +
+              '要求：1）基金名称一般为中文，中间不能有空字符串,可包含部分英文或括号' +
+              '2）名称后面通常会跟着金额或持有金额（数字，可能带千分位逗号和小数）；' +
+              '3）忽略无关信息，只返回你判断为基金名称的字符串；' +
+              '4）去重后输出。输出格式：严格返回 JSON，如 {"fund_names": ["基金名称1","基金名称2"]}，不要输出任何多余说明',
+          },
+          {
+            role: 'user',
+            content: String(ocrText),
+          },
+        ],
+        temperature: 0.2,
+        max_tokens: 1024,
+        thinking: {
+          type: 'disabled',
+        },
+      }),
+    });
+
+    if (!resp.ok) {
+      return [];
+    }
+
+    const data = await resp.json();
+    let content = data?.choices?.[0]?.message?.content?.match(/\{[\s\S]*?\}/)?.[0];
+    if (!content || typeof content !== 'string') return [];
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return [];
+    }
+
+    const names = parsed?.fund_names;
+    if (!Array.isArray(names)) return [];
+    return names
+      .map((n) => (typeof n === 'string' ? n.trim().replaceAll(' ','') : ''))
+      .filter(Boolean);
+  } catch (e) {
+    return [];
+  }
 };
 
 let historyQueue = Promise.resolve();
@@ -498,7 +567,7 @@ export const fetchFundHistory = async (code, range = '1m') => {
         // Fetch first page to get metadata
         const firstUrl = `https://fundf10.eastmoney.com/F10DataApi.aspx?type=lsjz&code=${code}&page=${page}&per=${per}&sdate=${sdate}&edate=${edate}`;
         await loadScript(firstUrl);
-        
+
         if (!window.apidata || !window.apidata.content || window.apidata.content.includes('暂无数据')) {
           resolve([]);
           return;

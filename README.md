@@ -45,10 +45,11 @@
    cp env.example .env.local
    ```
    按照 `env.example` 填入以下值：
-  - `NEXT_PUBLIC_SUPABASE_URL`：Supabase 项目 URL
-  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`：Supabase 匿名公钥
+  - `NEXT_PUBLIC_Supabase_URL`：Supabase 项目 URL
+  - `NEXT_PUBLIC_Supabase_ANON_KEY`：Supabase 匿名公钥
   - `NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY`：Web3Forms Access Key
-  - `NEXT_PUBLIC_GA_ID`：Google Analytics Measurement ID（形如 `G-xxxx`）
+  - `NEXT_PUBLIC_GA_ID`：Google Analytics Measurement ID（如 `G-xxxx`）
+  - `NEXT_PUBLIC_GITHUB_LATEST_RELEASE_URL`：GitHub 最新 Release 接口地址，用于在页面中展示“发现新版本”提示（如：`https://api.github.com/repos/hzm0321/real-time-fund/releases/latest`）
 
 注：如不使用登录、反馈或 GA 统计功能，可不设置对应变量
 
@@ -58,30 +59,35 @@
    ```
    访问 [http://localhost:3000](http://localhost:3000) 查看效果。
 
-### supabase 配置说明
-1. NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_ANON_KEY 获取
+### Supabase 配置说明
+1. NEXT_PUBLIC_Supabase_URL 和 NEXT_PUBLIC_Supabase_ANON_KEY 获取
 
-   NEXT_PUBLIC_SUPABASE_URL：supabase控制台 → Project Settings → General → Project ID  
-   NEXT_PUBLIC_SUPABASE_ANON_KEY： supabase控制台 → Project Settings → API Keys → Publishable key
+   NEXT_PUBLIC_Supabase_URL：Supabase控制台 → Project Settings → General → Project ID  
+   NEXT_PUBLIC_Supabase_ANON_KEY： Supabase控制台 → Project Settings → API Keys → Publishable key
 
 2. 邮件数量修改
 
-    supabase 免费项目自带每小时2条邮件服务。如果觉得额度不够，可以改成自己的邮箱SMTP。修改路径在 supabase控制台 → Authentication → Email → SMTP Settings。  
+    Supabase 免费项目自带每小时2条邮件服务。如果觉得额度不够，可以改成自己的邮箱SMTP。修改路径在 Supabase控制台 → Authentication → Email → SMTP Settings。  
     之后可在 Rate Limits ，自由修改每小时邮件数量。
 
 3. 修改接收到的邮件为验证码  
 
-    在 supabase控制台 → Authentication → Email → Confirm sign up，选择 `{{.token}}`。  
+    在 Supabase控制台 → Authentication → Email → Confirm sign up，选择 `{{.token}}`。  
 
-4. 目前项目用到的 sql 语句，查看项目 supabase.sql 文件。
+4. 修改验证码位数  
 
-更多 supabase 相关内容查阅官方文档。
+    官方验证码位数默认为8位，可自行修改。常见一般为6位。
+   在 Supabase控制台 → Authentication → Sign In / Providers → Auth Providers → email → Minimum password length  和 Email OTP Length 都改为6位。
+
+5. 目前项目用到的 sql 语句，查看项目 supabase.sql 文件。
+
+更多 Supabase 相关内容查阅官方文档。
 
 ### 构建与部署
 
 本项目已配置 GitHub Actions。每次推送到 `main` 分支时，会自动执行构建并部署到 GitHub Pages。
 如需使用 GitHub Actions 部署，请在 GitHub 项目 Settings → Secrets and variables → Actions 中创建对应的 Repository secrets（字段名称与 `.env.local` 保持一致）。
-包括：`NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、`NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY`、`NEXT_PUBLIC_GA_ID`。
+包括：`NEXT_PUBLIC_Supabase_URL`、`NEXT_PUBLIC_Supabase_ANON_KEY`、`NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY`、`NEXT_PUBLIC_GA_ID`、`NEXT_PUBLIC_GITHUB_LATEST_RELEASE_URL`。
 
 若要手动构建：
 ```bash
@@ -97,7 +103,7 @@ npm run build
 ```bash
 docker build -t real-time-fund .
 # 或通过 --build-arg 传入，例如：
-# docker build -t real-time-fund --build-arg NEXT_PUBLIC_SUPABASE_URL=xxx --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=xxx --build-arg NEXT_PUBLIC_GA_ID=G-xxxx .
+# docker build -t real-time-fund --build-arg NEXT_PUBLIC_Supabase_URL=xxx --build-arg NEXT_PUBLIC_Supabase_ANON_KEY=xxx --build-arg NEXT_PUBLIC_GA_ID=G-xxxx .
 ```
 
 2. 启动容器
@@ -136,7 +142,8 @@ docker compose up -d
 - **要求**：基于本项目衍生或修改的作品需以相同协议开源，并保留版权声明与协议全文。
 - **无担保**：软件按「原样」提供，不提供任何明示或暗示的担保。
 
-完整协议文本见仓库根目录 [LICENSE](./LICENSE) 文件，或 [GNU AGPL v3 官方说明](https://www.gnu.org/licenses/agpl-3.0.html)。
+完整协议文本见仓库根目录 [LICENSE](./LICENSE) 文件，或 [GNU AGPL v3 官方说明](https://www.gnu.org/licenses/agpl-3.0.html)。  
 
 ---
+二开或转载需注明出处。  
 Made by [hzm](https://github.com/hzm0321)
