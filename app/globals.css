@@ -725,15 +725,15 @@ input[type="number"] {
 
 /* 固定像素列宽，避免初始在视口外的列滚入后布局错误、内容不展示；不依赖 fr/内容测量 */
 .table-scroll-area-inner {
-  width: 1152px;
-  min-width: 1152px;
+  width: 1292px;
+  /*min-width: 1192px;*/
 }
 
-/* 基金名称 净值 涨跌幅 估值涨跌幅 估值时间 持仓金额 当日收益 持有收益（当日收益与持有收益同宽） */
+/* 基金名称 净值 涨跌幅 估值涨跌幅 估值时间 持仓金额 当日收益 持有收益（三列同宽） */
 .table-header-row-scroll,
 .table-row-scroll {
   display: grid;
-  grid-template-columns: 220px 100px 100px 100px 100px 120px 140px 140px;
+  grid-template-columns: 220px 100px 100px 100px 100px 140px 140px 140px;
   align-items: center;
   gap: 12px;
   width: 100%;
@@ -756,6 +756,18 @@ input[type="number"] {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+/* 当日收益、持有收益列：约束内容不溢出到相邻列，过长显示省略号 */
+.table-row-scroll .profit-cell,
+.table-row-scroll .holding-cell {
+  min-width: 0;
+}
+.table-row-scroll .profit-cell > *,
+.table-row-scroll .holding-cell > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .table-row-scroll .name-cell .name-text {
@@ -801,7 +813,7 @@ input[type="number"] {
 }
 
 .table-fixed-row {
-  min-height: 52px;
+  min-height: 59px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -820,7 +832,7 @@ input[type="number"] {
 
 .table-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 1.2fr 1.2fr 60px;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 1.2fr 1.2fr 1.2fr;
   align-items: center;
   gap: 12px;
   padding: 12px 24px !important;
@@ -838,7 +850,7 @@ input[type="number"] {
 
 .table-header-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 1.2fr 1.2fr 60px;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1.2fr 1.2fr 1.2fr 1.2fr;
   gap: 12px;
   padding: 16px 24px;
   background: rgba(255, 255, 255, 0.05);
