@@ -113,8 +113,8 @@ export default function PcFundTable({
       {
         accessorKey: 'fundName',
         header: '基金名称',
-        size: 240,
-        minSize: 100,
+        size: 265,
+        minSize: 140,
         enablePinning: true,
         cell: (info) => {
           const original = info.row.original || {};
@@ -180,6 +180,8 @@ export default function PcFundTable({
       {
         accessorKey: 'yesterdayChangePercent',
         header: '昨日涨跌幅',
+        size: 135,
+        minSize: 100,
         cell: (info) => {
           const original = info.row.original || {};
           const value = original.yesterdayChangeValue;
@@ -204,8 +206,8 @@ export default function PcFundTable({
       {
         accessorKey: 'estimateChangePercent',
         header: '估值涨跌幅',
-        size: 100,
-        minSize: 80,
+        size: 135,
+        minSize: 100,
         cell: (info) => {
           const original = info.row.original || {};
           const value = original.estimateChangeValue;
@@ -231,6 +233,8 @@ export default function PcFundTable({
       {
         accessorKey: 'holdingAmount',
         header: '持仓金额',
+        size: 135,
+        minSize: 100,
         cell: (info) => {
           const original = info.row.original || {};
           if (original.holdingAmountValue == null) {
@@ -288,6 +292,8 @@ export default function PcFundTable({
       {
         accessorKey: 'todayProfit',
         header: '当日收益',
+        size: 135,
+        minSize: 100,
         cell: (info) => {
           const original = info.row.original || {};
           const value = original.todayProfitValue;
@@ -307,7 +313,7 @@ export default function PcFundTable({
       {
         accessorKey: 'holdingProfit',
         header: '持有收益',
-        size: 140,
+        size: 135,
         minSize: 100,
         cell: (info) => {
           const original = info.row.original || {};
