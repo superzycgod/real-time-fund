@@ -11,6 +11,7 @@ import {
   Filler
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
+import { isNumber } from 'lodash';
 
 ChartJS.register(
   CategoryScale,
@@ -99,7 +100,7 @@ export default function FundIntradayChart({ series = [], referenceNav }) {
         ticks: {
           color: '#9ca3af',
           font: { size: 10 },
-          callback: (v) => (typeof v === 'number' ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : v)
+          callback: (v) => (isNumber(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : v)
         }
       }
     },
@@ -193,14 +194,20 @@ export default function FundIntradayChart({ series = [], referenceNav }) {
       if (labels && index in labels) {
         const timeStr = String(labels[index]);
         const tw = ctx.measureText(timeStr).width + 8;
+        const chartLeft = chart.scales.x.left;
+        const chartRight = chart.scales.x.right;
+        let labelLeft = x - tw / 2;
+        if (labelLeft < chartLeft) labelLeft = chartLeft;
+        if (labelLeft + tw > chartRight) labelLeft = chartRight - tw;
+        const labelCenterX = labelLeft + tw / 2;
         ctx.fillStyle = prim;
-        ctx.fillRect(x - tw / 2, bottomY, tw, 16);
+        ctx.fillRect(labelLeft, bottomY, tw, 16);
         ctx.fillStyle = bgText;
-        ctx.fillText(timeStr, x, bottomY + 8);
+        ctx.fillText(timeStr, labelCenterX, bottomY + 8);
       }
       if (data && index in data) {
         const val = data[index];
-        const valueStr = typeof val === 'number' ? `${val >= 0 ? '+' : ''}${val.toFixed(2)}%` : String(val);
+        const valueStr = isNumber(val) ? `${val >= 0 ? '+' : ''}${val.toFixed(2)}%` : String(val);
         const vw = ctx.measureText(valueStr).width + 8;
         ctx.fillStyle = prim;
         ctx.fillRect(leftX, y - 8, vw, 16);

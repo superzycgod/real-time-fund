@@ -311,7 +311,15 @@ export default function FundTrendChart({ code, isExpanded, onToggleExpand, trans
           const textW = ctx.measureText(text).width;
           const w = textW + paddingH * 2;
           const h = 18;
-          const left = x - w / 2;
+
+          // 计算原始 left，并对左右边界做收缩，避免在最右/最左侧被裁剪
+          const chartLeft = chart.scales.x.left;
+          const chartRight = chart.scales.x.right;
+          let left = x - w / 2;
+          if (left < chartLeft) left = chartLeft;
+          if (left + w > chartRight) left = chartRight - w;
+          const centerX = left + w / 2;
+
           const top = y - 24;
 
           drawRoundRect(left, top, w, h, radius);
@@ -323,7 +331,7 @@ export default function FundTrendChart({ code, isExpanded, onToggleExpand, trans
           ctx.fillStyle = textColor;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(text, x, top + h / 2);
+          ctx.fillText(text, centerX, top + h / 2);
           ctx.restore();
       };
 
@@ -397,12 +405,18 @@ export default function FundTrendChart({ code, isExpanded, onToggleExpand, trans
            const value = datasets[datasetIndex].data[index];
 
            if (dateStr !== undefined && value !== undefined) {
-               // X axis label (date)
+              // X axis label (date) with boundary clamping
                const textWidth = ctx.measureText(dateStr).width + 8;
+               const chartLeft = chart.scales.x.left;
+               const chartRight = chart.scales.x.right;
+               let labelLeft = x - textWidth / 2;
+               if (labelLeft < chartLeft) labelLeft = chartLeft;
+               if (labelLeft + textWidth > chartRight) labelLeft = chartRight - textWidth;
+               const labelCenterX = labelLeft + textWidth / 2;
                ctx.fillStyle = primaryColor;
-               ctx.fillRect(x - textWidth / 2, bottomY, textWidth, 16);
+               ctx.fillRect(labelLeft, bottomY, textWidth, 16);
                ctx.fillStyle = '#0f172a'; // --background
-               ctx.fillText(dateStr, x, bottomY + 8);
+               ctx.fillText(dateStr, labelCenterX, bottomY + 8);
 
                // Y axis label (value)
                const valueStr = (typeof value === 'number' ? value.toFixed(2) : value) + '%';

@@ -9,6 +9,8 @@ import { glass } from '@dicebear/collection';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
+import { isNumber, isString, isPlainObject } from 'lodash';
 import Announcement from "./components/Announcement";
 import { Stat } from "./components/Common";
 import FundTrendChart from "./components/FundTrendChart";
@@ -35,15 +37,19 @@ import TradeModal from "./components/TradeModal";
 import TransactionHistoryModal from "./components/TransactionHistoryModal";
 import AddHistoryModal from "./components/AddHistoryModal";
 import UpdatePromptModal from "./components/UpdatePromptModal";
+import RefreshButton from "./components/RefreshButton";
 import WeChatModal from "./components/WeChatModal";
+import DcaModal from "./components/DcaModal";
 import githubImg from "./assets/github.svg";
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { recordValuation, getAllValuationSeries, clearFund } from './lib/valuationTimeseries';
 import { fetchFundData, fetchLatestRelease, fetchShanghaiIndexDate, fetchSmartFundNetValue, searchFunds, extractFundNamesWithLLM } from './api/fund';
 import packageJson from '../package.json';
+import PcFundTable from './components/PcFundTable';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+dayjs.extend(isSameOrAfter);
 
 const DEFAULT_TZ = 'Asia/Shanghai';
 const getBrowserTimeZone = () => {
@@ -171,7 +177,7 @@ function GroupSummary({ funds, holdings, groupName, getProfit, stickyTop }) {
         }
         if (profit.profitTotal !== null) {
           totalHoldingReturn += profit.profitTotal;
-          if (holding && typeof holding.cost === 'number' && typeof holding.share === 'number') {
+          if (holding && isNumber(holding.cost) && isNumber(holding.share)) {
             totalCost += holding.cost * holding.share;
           }
         }
@@ -302,14 +308,12 @@ export default function HomePage() {
   const isExplicitLoginRef = useRef(false);
 
   // 刷新频率状态
-  const [refreshMs, setRefreshMs] = useState(30000);
+  const [refreshMs, setRefreshMs] = useState(60000);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [tempSeconds, setTempSeconds] = useState(30);
+  const [tempSeconds, setTempSeconds] = useState(60);
 
   // 全局刷新状态
   const [refreshing, setRefreshing] = useState(false);
-  // 刷新周期进度 0~1，用于环形进度条
-  const [refreshProgress, setRefreshProgress] = useState(0);
 
   // 收起/展开状态
   const [collapsedCodes, setCollapsedCodes] = useState(new Set());
@@ -419,11 +423,13 @@ export default function HomePage() {
   const [holdingModal, setHoldingModal] = useState({ open: false, fund: null });
   const [actionModal, setActionModal] = useState({ open: false, fund: null });
   const [tradeModal, setTradeModal] = useState({ open: false, fund: null, type: 'buy' }); // type: 'buy' | 'sell'
+  const [dcaModal, setDcaModal] = useState({ open: false, fund: null });
   const [clearConfirm, setClearConfirm] = useState(null); // { fund }
   const [donateOpen, setDonateOpen] = useState(false);
   const [holdings, setHoldings] = useState({}); // { [code]: { share: number, cost: number } }
   const [pendingTrades, setPendingTrades] = useState([]); // [{ id, fundCode, share, date, ... }]
   const [transactions, setTransactions] = useState({}); // { [code]: [{ id, type, amount, share, price, date, timestamp }] }
+  const [dcaPlans, setDcaPlans] = useState({}); // { [code]: { amount, feeRate, cycle, firstDate, enabled } }
   const [historyModal, setHistoryModal] = useState({ open: false, fund: null });
   const [addHistoryModal, setAddHistoryModal] = useState({ open: false, fund: null });
   const [percentModes, setPercentModes] = useState({}); // { [code]: boolean }
@@ -443,6 +449,7 @@ export default function HomePage() {
   const todayStr = formatDate();
 
   const [isMobile, setIsMobile] = useState(false);
+  const [hoveredPcRowCode, setHoveredPcRowCode] = useState(null); // PC 列表行悬浮高亮
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -555,11 +562,11 @@ export default function HomePage() {
   }, []);
 
   // 计算持仓收益
-  const getHoldingProfit = (fund, holding) => {
-    if (!holding || typeof holding.share !== 'number') return null;
+  const getHoldingProfit = useCallback((fund, holding) => {
+    if (!holding || !isNumber(holding.share)) return null;
 
     const hasTodayData = fund.jzrq === todayStr;
-    const hasTodayValuation = typeof fund.gztime === 'string' && fund.gztime.startsWith(todayStr);
+    const hasTodayValuation = isString(fund.gztime) && fund.gztime.startsWith(todayStr);
     const canCalcTodayProfit = hasTodayData || hasTodayValuation;
 
     // 如果是交易日且9点以后，且今日净值未出，则强制使用估值（隐藏涨跌幅列模式）
@@ -577,8 +584,8 @@ export default function HomePage() {
         const amount = holding.share * currentNav;
         // 优先用 zzl (真实涨跌幅), 降级用 gszzl
         // 若 gztime 日期 > jzrq，说明估值更新晚于净值日期，优先使用 gszzl 计算当日盈亏
-        const gz = typeof fund.gztime === 'string' ? toTz(fund.gztime) : null;
-        const jz = typeof fund.jzrq === 'string' ? toTz(fund.jzrq) : null;
+        const gz = isString(fund.gztime) ? toTz(fund.gztime) : null;
+        const jz = isString(fund.jzrq) ? toTz(fund.jzrq) : null;
         const preferGszzl =
           !!gz &&
           !!jz &&
@@ -602,7 +609,7 @@ export default function HomePage() {
       // 否则使用估值
       currentNav = fund.estPricedCoverage > 0.05
         ? fund.estGsz
-        : (typeof fund.gsz === 'number' ? fund.gsz : Number(fund.dwjz));
+        : (isNumber(fund.gsz) ? fund.gsz : Number(fund.dwjz));
 
       if (!currentNav) return null;
 
@@ -620,7 +627,7 @@ export default function HomePage() {
     const amount = holding.share * currentNav;
 
     // 总收益 = (当前净值 - 成本价) * 份额
-    const profitTotal = typeof holding.cost === 'number'
+    const profitTotal = isNumber(holding.cost)
       ? (currentNav - holding.cost) * holding.share
       : null;
 
@@ -629,35 +636,142 @@ export default function HomePage() {
       profitToday,
       profitTotal
     };
-  };
+  }, [isTradingDay, todayStr]);
 
 
   // 过滤和排序后的基金列表
-  const displayFunds = funds
-    .filter(f => {
-      if (currentTab === 'all') return true;
-      if (currentTab === 'fav') return favorites.has(f.code);
-      const group = groups.find(g => g.id === currentTab);
-      return group ? group.codes.includes(f.code) : true;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'yield') {
-        const valA = typeof a.estGszzl === 'number' ? a.estGszzl : (a.gszzl ?? a.zzl ?? 0);
-        const valB = typeof b.estGszzl === 'number' ? b.estGszzl : (b.gszzl ?? a.zzl ?? 0);
-        return sortOrder === 'asc' ? valA - valB : valB - valA;
+  const displayFunds = useMemo(
+    () => {
+      let filtered = funds.filter(f => {
+        if (currentTab === 'all') return true;
+        if (currentTab === 'fav') return favorites.has(f.code);
+        const group = groups.find(g => g.id === currentTab);
+        return group ? group.codes.includes(f.code) : true;
+      });
+
+      if (currentTab !== 'all' && currentTab !== 'fav' && sortBy === 'default') {
+        const group = groups.find(g => g.id === currentTab);
+        if (group && group.codes) {
+          const codeMap = new Map(group.codes.map((code, index) => [code, index]));
+          filtered.sort((a, b) => {
+            const indexA = codeMap.get(a.code) ?? Number.MAX_SAFE_INTEGER;
+            const indexB = codeMap.get(b.code) ?? Number.MAX_SAFE_INTEGER;
+            return indexA - indexB;
+          });
+        }
       }
-      if (sortBy === 'holding') {
-        const pa = getHoldingProfit(a, holdings[a.code]);
-        const pb = getHoldingProfit(b, holdings[b.code]);
-        const valA = pa?.profitTotal ?? Number.NEGATIVE_INFINITY;
-        const valB = pb?.profitTotal ?? Number.NEGATIVE_INFINITY;
-        return sortOrder === 'asc' ? valA - valB : valB - valA;
-      }
-      if (sortBy === 'name') {
-        return sortOrder === 'asc' ? a.name.localeCompare(b.name, 'zh-CN') : b.name.localeCompare(a.name, 'zh-CN');
-      }
-      return 0;
-    });
+
+      return filtered.sort((a, b) => {
+        if (sortBy === 'yield') {
+          const valA = isNumber(a.estGszzl) ? a.estGszzl : (a.gszzl ?? a.zzl ?? 0);
+          const valB = isNumber(b.estGszzl) ? b.estGszzl : (b.gszzl ?? a.zzl ?? 0);
+          return sortOrder === 'asc' ? valA - valB : valB - valA;
+        }
+        if (sortBy === 'holding') {
+          const pa = getHoldingProfit(a, holdings[a.code]);
+          const pb = getHoldingProfit(b, holdings[b.code]);
+          const valA = pa?.profitTotal ?? Number.NEGATIVE_INFINITY;
+          const valB = pb?.profitTotal ?? Number.NEGATIVE_INFINITY;
+          return sortOrder === 'asc' ? valA - valB : valB - valA;
+        }
+        if (sortBy === 'name') {
+          return sortOrder === 'asc' ? a.name.localeCompare(b.name, 'zh-CN') : b.name.localeCompare(a.name, 'zh-CN');
+        }
+        return 0;
+      });
+    },
+    [funds, currentTab, favorites, groups, sortBy, sortOrder, holdings, getHoldingProfit],
+  );
+
+  // PC 端表格数据（用于 PcFundTable）
+  const pcFundTableData = useMemo(
+    () =>
+      displayFunds.map((f) => {
+        const hasTodayData = f.jzrq === todayStr;
+        const shouldHideChange = isTradingDay && !hasTodayData;
+        const navOrEstimate = !shouldHideChange
+          ? (f.dwjz ?? '—')
+          : (f.noValuation
+            ? (f.dwjz ?? '—')
+            : (f.estPricedCoverage > 0.05
+              ? (f.estGsz != null ? Number(f.estGsz).toFixed(4) : '—')
+              : (f.gsz ?? '—')));
+
+        const yesterdayChangePercent =
+          f.zzl != null && f.zzl !== ''
+            ? `${f.zzl > 0 ? '+' : ''}${Number(f.zzl).toFixed(2)}%`
+            : '—';
+        const yesterdayChangeValue =
+          f.zzl != null && f.zzl !== '' ? Number(f.zzl) : null;
+        const yesterdayDate = f.jzrq || '-';
+
+        const estimateChangePercent = f.noValuation
+          ? '—'
+          : (f.estPricedCoverage > 0.05
+            ? (f.estGszzl != null
+              ? `${f.estGszzl > 0 ? '+' : ''}${Number(f.estGszzl).toFixed(2)}%`
+              : '—')
+            : (isNumber(f.gszzl)
+              ? `${f.gszzl > 0 ? '+' : ''}${Number(f.gszzl).toFixed(2)}%`
+              : (f.gszzl ?? '—')));
+        const estimateChangeValue = f.noValuation
+          ? null
+          : (f.estPricedCoverage > 0.05
+            ? (isNumber(f.estGszzl) ? Number(f.estGszzl) : null)
+            : (isNumber(f.gszzl) ? Number(f.gszzl) : null));
+        const estimateTime = f.noValuation ? (f.jzrq || '-') : (f.gztime || f.time || '-');
+
+        const holding = holdings[f.code];
+        const profit = getHoldingProfit(f, holding);
+        const amount = profit ? profit.amount : null;
+        const holdingAmount =
+          amount == null ? '未设置' : `¥${amount.toFixed(2)}`;
+        const holdingAmountValue = amount;
+
+        const profitToday = profit ? profit.profitToday : null;
+        const todayProfit =
+          profitToday == null
+            ? ''
+            : `${profitToday > 0 ? '+' : profitToday < 0 ? '-' : ''}¥${Math.abs(profitToday).toFixed(2)}`;
+        const todayProfitValue = profitToday;
+
+        const total = profit ? profit.profitTotal : null;
+        const principal =
+          holding && isNumber(holding.cost) && isNumber(holding.share)
+            ? holding.cost * holding.share
+            : 0;
+        const asPercent = !!percentModes[f.code];
+        const holdingProfit =
+          total == null
+            ? ''
+            : (asPercent && principal > 0
+              ? `${total > 0 ? '+' : total < 0 ? '-' : ''}${Math.abs((total / principal) * 100).toFixed(2)}%`
+              : `${total > 0 ? '+' : total < 0 ? '-' : ''}¥${Math.abs(total).toFixed(2)}`);
+        const holdingProfitValue = total;
+
+        return {
+          rawFund: f,
+          code: f.code,
+          fundName: f.name,
+          isUpdated: f.jzrq === todayStr,
+          navOrEstimate,
+          yesterdayChangePercent,
+          yesterdayChangeValue,
+          yesterdayDate,
+          estimateChangePercent,
+          estimateChangeValue,
+          estimateChangeMuted: f.noValuation,
+          estimateTime,
+          holdingAmount,
+          holdingAmountValue,
+          todayProfit,
+          todayProfitValue,
+          holdingProfit,
+          holdingProfitValue,
+        };
+      }),
+    [displayFunds, holdings, isTradingDay, todayStr, getHoldingProfit, percentModes],
+  );
 
   // 自动滚动选中 Tab 到可视区域
   useEffect(() => {
@@ -704,6 +818,8 @@ export default function HomePage() {
       setTradeModal({ open: true, fund, type });
     } else if (type === 'history') {
       setHistoryModal({ open: true, fund });
+    } else if (type === 'dca') {
+      setDcaModal({ open: true, fund });
     }
   };
 
@@ -772,6 +888,7 @@ export default function HomePage() {
             price: result.value,
             date: result.date, // 使用获取到净值的日期
             isAfter3pm: trade.isAfter3pm,
+            isDca: !!trade.isDca,
             timestamp: Date.now()
         });
       }
@@ -817,24 +934,7 @@ export default function HomePage() {
 
   const handleAddHistory = (data) => {
     const fundCode = data.fundCode;
-    const current = holdings[fundCode] || { share: 0, cost: 0 };
-    const isBuy = data.type === 'buy';
-
-    let newShare, newCost;
-
-    if (isBuy) {
-      newShare = current.share + data.share;
-      // 加权平均成本
-      const buyCost = data.amount; // amount is total cost
-      newCost = (current.cost * current.share + buyCost) / newShare;
-    } else {
-      newShare = Math.max(0, current.share - data.share);
-      newCost = current.cost;
-      if (newShare === 0) newCost = 0;
-    }
-
-    handleSaveHolding(fundCode, { share: newShare, cost: newCost });
-
+    // 添加历史记录仅作补录展示，不修改真实持仓金额与份额
     setTransactions(prev => {
       const current = prev[fundCode] || [];
       const record = {
@@ -845,8 +945,10 @@ export default function HomePage() {
         price: data.price,
         date: data.date,
         isAfter3pm: false, // 历史记录通常不需要此标记，或者默认为 false
+        isDca: false,
+        isHistoryOnly: true, // 仅记录，不参与持仓计算
         timestamp: data.timestamp || Date.now()
-      };
+      }
       // 按时间倒序排列
       const next = [record, ...current].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       const nextState = { ...prev, [fundCode]: next };
@@ -872,6 +974,7 @@ export default function HomePage() {
             feeValue: data.feeValue,
             date: data.date,
             isAfter3pm: data.isAfter3pm,
+            isDca: false,
             timestamp: Date.now()
         };
 
@@ -918,6 +1021,7 @@ export default function HomePage() {
         price: data.price,
         date: data.date,
         isAfter3pm: data.isAfter3pm,
+        isDca: false,
         timestamp: Date.now()
       };
       const next = [record, ...current];
@@ -977,6 +1081,8 @@ export default function HomePage() {
       setToast((prev) => ({ ...prev, show: false }));
     }, 3000);
   };
+
+  // 定投计划自动生成买入队列的逻辑会在 storageHelper 定义之后实现
 
   const handleOpenLogin = () => {
     setUserMenuOpen(false);
@@ -1125,7 +1231,7 @@ export default function HomePage() {
             parsedNames = [];
           }
           parsedNames.forEach((name) => {
-            if (name && typeof name === 'string') {
+            if (isString(name)) {
               allNames.add(name.trim());
             }
           });
@@ -1309,8 +1415,12 @@ export default function HomePage() {
     try {
       const list = JSON.parse(value || '[]');
       if (!Array.isArray(list)) return '';
-      const codes = list.map((item) => item?.code).filter(Boolean);
-      return Array.from(new Set(codes)).sort().join('|');
+      const items = list.map((item) => {
+        if (!item?.code) return null;
+        // 加入 jzrq 和 dwjz 以检测净值更新
+        return `${item.code}:${item.jzrq || ''}:${item.dwjz || ''}`;
+      }).filter(Boolean);
+      return Array.from(new Set(items)).join('|');
     } catch (e) {
       return '';
     }
@@ -1352,7 +1462,7 @@ export default function HomePage() {
 
   const storageHelper = useMemo(() => {
     // 仅以下 key 参与云端同步；fundValuationTimeseries 不同步到云端（测试中功能，暂不同步）
-    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'collapsedTrends', 'refreshMs', 'holdings', 'pendingTrades', 'transactions', 'viewMode']);
+    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'collapsedTrends', 'refreshMs', 'holdings', 'pendingTrades', 'transactions', 'viewMode', 'dcaPlans']);
     const triggerSync = (key, prevValue, nextValue) => {
       if (keys.has(key)) {
         // 标记为脏数据
@@ -1399,7 +1509,7 @@ export default function HomePage() {
 
   useEffect(() => {
     // 仅以下 key 的变更会触发云端同步；fundValuationTimeseries 不在其中
-    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'collapsedTrends', 'refreshMs', 'holdings', 'pendingTrades', 'viewMode']);
+    const keys = new Set(['funds', 'favorites', 'groups', 'collapsedCodes', 'collapsedTrends', 'refreshMs', 'holdings', 'pendingTrades', 'viewMode', 'dcaPlans']);
     const onStorage = (e) => {
       if (!e.key) return;
       if (e.key === 'localUpdatedAt') {
@@ -1466,6 +1576,104 @@ export default function HomePage() {
       return next;
     });
   };
+
+  const scheduleDcaTrades = useCallback(() => {
+    if (!isPlainObject(dcaPlans)) return;
+    const codesSet = new Set(funds.map((f) => f.code));
+    if (codesSet.size === 0) return;
+
+    const today = toTz(todayStr).startOf('day');
+    const nextPlans = { ...dcaPlans };
+    const newPending = [];
+
+    Object.entries(dcaPlans).forEach(([code, plan]) => {
+      if (!plan || !plan.enabled) return;
+      if (!codesSet.has(code)) return;
+
+      const amount = Number(plan.amount);
+      const feeRate = Number(plan.feeRate) || 0;
+      if (!amount || amount <= 0) return;
+
+      const cycle = plan.cycle || 'monthly';
+      if (!plan.firstDate) return;
+
+      const first = toTz(plan.firstDate).startOf('day');
+      if (today.isBefore(first, 'day')) return;
+
+      const last = plan.lastDate ? toTz(plan.lastDate).startOf('day') : null;
+
+      // 回溯补单：从 lastDate (若不存在则从 firstDate 前一天) 开始，按周期一直推到今天
+      let anchor = last ? last : first.clone().subtract(1, 'day');
+      let current = anchor;
+      let lastGenerated = null;
+
+      const stepOnce = () => {
+        if (cycle === 'daily') return current.add(1, 'day');
+        if (cycle === 'weekly') return current.add(1, 'week');
+        if (cycle === 'biweekly') return current.add(2, 'week');
+        if (cycle === 'monthly') return current.add(1, 'month');
+        return current.add(1, 'day');
+      };
+
+      // 循环生成所有 <= today 的应扣款日
+      while (true) {
+        current = stepOnce();
+        if (current.isAfter(today, 'day')) break;
+        if (current.isBefore(first, 'day')) continue;
+
+        const dateStr = current.format('YYYY-MM-DD');
+
+        const pending = {
+          id: `dca_${code}_${dateStr}_${Date.now()}`,
+          fundCode: code,
+          fundName: (funds.find(f => f.code === code) || {}).name,
+          type: 'buy',
+          share: null,
+          amount,
+          feeRate,
+          feeMode: undefined,
+          feeValue: undefined,
+          date: dateStr,
+          isAfter3pm: false,
+          isDca: true,
+          timestamp: Date.now()
+        };
+        newPending.push(pending);
+        lastGenerated = current;
+      }
+
+      if (lastGenerated) {
+        nextPlans[code] = {
+          ...plan,
+          lastDate: lastGenerated.format('YYYY-MM-DD')
+        };
+      }
+    });
+
+    if (newPending.length === 0) {
+      if (JSON.stringify(nextPlans) !== JSON.stringify(dcaPlans)) {
+        setDcaPlans(nextPlans);
+        storageHelper.setItem('dcaPlans', JSON.stringify(nextPlans));
+      }
+      return;
+    }
+
+    setDcaPlans(nextPlans);
+    storageHelper.setItem('dcaPlans', JSON.stringify(nextPlans));
+
+    setPendingTrades(prev => {
+      const merged = [...(prev || []), ...newPending];
+      storageHelper.setItem('pendingTrades', JSON.stringify(merged));
+      return merged;
+    });
+
+    showToast(`已生成 ${newPending.length} 笔定投买入`, 'success');
+  }, [dcaPlans, funds, todayStr, storageHelper]);
+
+  useEffect(() => {
+    if (!isTradingDay) return;
+    scheduleDcaTrades();
+  }, [isTradingDay, scheduleDcaTrades]);
 
   const handleAddGroup = (name) => {
     const newGroup = {
@@ -1542,6 +1750,60 @@ export default function HomePage() {
     storageHelper.setItem('groups', JSON.stringify(next));
   };
 
+  const handleReorder = (oldIndex, newIndex) => {
+    const movedItem = displayFunds[oldIndex];
+    const targetItem = displayFunds[newIndex];
+    if (!movedItem || !targetItem) return;
+
+    if (currentTab === 'all' || currentTab === 'fav') {
+      const newFunds = [...funds];
+      const fromIndex = newFunds.findIndex(f => f.code === movedItem.code);
+
+      if (fromIndex === -1) return;
+
+      // Remove moved item
+      const [removed] = newFunds.splice(fromIndex, 1);
+
+      // Find target index in the array (after removal)
+      const toIndex = newFunds.findIndex(f => f.code === targetItem.code);
+
+      if (toIndex === -1) {
+        // If target not found (should not happen), put it back
+        newFunds.splice(fromIndex, 0, removed);
+        return;
+      }
+
+      if (oldIndex < newIndex) {
+        // Moving down, insert after target
+        newFunds.splice(toIndex + 1, 0, removed);
+      } else {
+        // Moving up, insert before target
+        newFunds.splice(toIndex, 0, removed);
+      }
+
+      setFunds(newFunds);
+      storageHelper.setItem('funds', JSON.stringify(newFunds));
+    } else {
+      const groupIndex = groups.findIndex(g => g.id === currentTab);
+      if (groupIndex > -1) {
+        const group = groups[groupIndex];
+        const newCodes = [...group.codes];
+        const fromIndex = newCodes.indexOf(movedItem.code);
+        const toIndex = newCodes.indexOf(targetItem.code);
+
+        if (fromIndex !== -1 && toIndex !== -1) {
+          newCodes.splice(fromIndex, 1);
+          newCodes.splice(toIndex, 0, movedItem.code);
+
+          const newGroups = [...groups];
+          newGroups[groupIndex] = { ...group, codes: newCodes };
+          setGroups(newGroups);
+          storageHelper.setItem('groups', JSON.stringify(newGroups));
+        }
+      }
+    }
+  };
+
   // 按 code 去重，保留第一次出现的项，避免列表重复
   const dedupeByCode = (list) => {
     const seen = new Set();
@@ -1597,12 +1859,16 @@ export default function HomePage() {
       }
       // 加载持仓数据
       const savedHoldings = JSON.parse(localStorage.getItem('holdings') || '{}');
-      if (savedHoldings && typeof savedHoldings === 'object') {
+      if (isPlainObject(savedHoldings)) {
         setHoldings(savedHoldings);
       }
       const savedTransactions = JSON.parse(localStorage.getItem('transactions') || '{}');
-      if (savedTransactions && typeof savedTransactions === 'object') {
+      if (isPlainObject(savedTransactions)) {
         setTransactions(savedTransactions);
+      }
+      const savedDcaPlans = JSON.parse(localStorage.getItem('dcaPlans') || '{}');
+      if (isPlainObject(savedDcaPlans)) {
+        setDcaPlans(savedDcaPlans);
       }
       const savedViewMode = localStorage.getItem('viewMode');
       if (savedViewMode === 'card' || savedViewMode === 'list') {
@@ -1696,14 +1962,14 @@ export default function HomePage() {
       .channel(`user-configs-${user.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'user_configs', filter: `user_id=eq.${user.id}` }, async (payload) => {
         const incoming = payload?.new?.data;
-        if (!incoming || typeof incoming !== 'object') return;
+        if (!isPlainObject(incoming)) return;
         const incomingComparable = getComparablePayload(incoming);
         if (!incomingComparable || incomingComparable === lastSyncedRef.current) return;
         await applyCloudConfig(incoming, payload.new.updated_at);
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'user_configs', filter: `user_id=eq.${user.id}` }, async (payload) => {
         const incoming = payload?.new?.data;
-        if (!incoming || typeof incoming !== 'object') return;
+        if (!isPlainObject(incoming)) return;
         const incomingComparable = getComparablePayload(incoming);
         if (!incomingComparable || incomingComparable === lastSyncedRef.current) return;
         await applyCloudConfig(incoming, payload.new.updated_at);
@@ -1868,17 +2134,6 @@ export default function HomePage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [funds, refreshMs]);
-
-  // 刷新进度条：每 100ms 更新一次进度
-  useEffect(() => {
-    if (funds.length === 0 || refreshMs <= 0) return;
-    const t = setInterval(() => {
-      const elapsed = Date.now() - refreshCycleStartRef.current;
-      const p = Math.min(1, elapsed / refreshMs);
-      setRefreshProgress(p);
-    }, 100);
-    return () => clearInterval(t);
-  }, [funds.length, refreshMs]);
 
   const performSearch = async (val) => {
     if (!val.trim()) {
@@ -2068,7 +2323,7 @@ export default function HomePage() {
 
   const requestRemoveFund = (fund) => {
     const h = holdings[fund.code];
-    const hasHolding = h && typeof h.share === 'number' && h.share > 0;
+    const hasHolding = h && isNumber(h.share) && h.share > 0;
     if (hasHolding) {
       setFundDeleteConfirm({ code: fund.code, name: fund.name });
     } else {
@@ -2210,6 +2465,15 @@ export default function HomePage() {
       delete next[removeCode];
       return next;
     });
+
+    // 同步删除该基金的定投计划
+    setDcaPlans(prev => {
+      if (!prev || !prev[removeCode]) return prev;
+      const next = { ...prev };
+      delete next[removeCode];
+      storageHelper.setItem('dcaPlans', JSON.stringify(next));
+      return next;
+    });
   };
 
   const manualRefresh = async () => {
@@ -2221,7 +2485,7 @@ export default function HomePage() {
 
   const saveSettings = (e) => {
     e?.preventDefault?.();
-    const ms = Math.max(10, Number(tempSeconds)) * 1000;
+    const ms = Math.max(30, Number(tempSeconds)) * 1000;
     setRefreshMs(ms);
     storageHelper.setItem('refreshMs', String(ms));
     setSettingsOpen(false);
@@ -2238,7 +2502,7 @@ export default function HomePage() {
   };
 
   function getComparablePayload(payload) {
-    if (!payload || typeof payload !== 'object') return '';
+    if (!isPlainObject(payload)) return '';
     const rawFunds = Array.isArray(payload.funds) ? payload.funds : [];
     const fundCodes = rawFunds
       .map((fund) => normalizeCode(fund?.code || fund?.CODE))
@@ -2262,7 +2526,7 @@ export default function HomePage() {
           .map((group) => {
             const id = normalizeCode(group?.id);
             if (!id) return null;
-            const name = typeof group?.name === 'string' ? group.name : '';
+            const name = isString(group?.name) ? group.name : '';
             const codes = Array.isArray(group?.codes)
               ? Array.from(new Set(group.codes.map(normalizeCode).filter((code) => uniqueFundCodes.includes(code)))).sort()
               : [];
@@ -2272,9 +2536,7 @@ export default function HomePage() {
           .sort((a, b) => a.id.localeCompare(b.id))
       : [];
 
-    const holdingsSource = payload.holdings && typeof payload.holdings === 'object' && !Array.isArray(payload.holdings)
-      ? payload.holdings
-      : {};
+    const holdingsSource = isPlainObject(payload.holdings) ? payload.holdings : {};
     const holdings = {};
     Object.keys(holdingsSource)
       .map(normalizeCode)
@@ -2303,20 +2565,19 @@ export default function HomePage() {
               feeMode: trade?.feeMode || '',
               feeValue: normalizeNumber(trade?.feeValue),
               date: trade?.date || '',
-              isAfter3pm: !!trade?.isAfter3pm
+              isAfter3pm: !!trade?.isAfter3pm,
+              isDca: !!trade?.isDca
             };
           })
           .filter((trade) => trade && uniqueFundCodes.includes(trade.fundCode))
           .sort((a, b) => {
-            const keyA = a.id || `${a.fundCode}|${a.type}|${a.date}|${a.share ?? ''}|${a.amount ?? ''}|${a.feeMode}|${a.feeValue ?? ''}|${a.feeRate ?? ''}|${a.isAfter3pm ? 1 : 0}`;
-            const keyB = b.id || `${b.fundCode}|${b.type}|${b.date}|${b.share ?? ''}|${b.amount ?? ''}|${b.feeMode}|${b.feeValue ?? ''}|${b.feeRate ?? ''}|${b.isAfter3pm ? 1 : 0}`;
+            const keyA = a.id || `${a.fundCode}|${a.type}|${a.date}|${a.share ?? ''}|${a.amount ?? ''}|${a.feeMode}|${a.feeValue ?? ''}|${a.feeRate ?? ''}|${a.isAfter3pm ? 1 : 0}|${a.isDca ? 1 : 0}`;
+            const keyB = b.id || `${b.fundCode}|${b.type}|${b.date}|${b.share ?? ''}|${b.amount ?? ''}|${b.feeMode}|${b.feeValue ?? ''}|${b.feeRate ?? ''}|${b.isAfter3pm ? 1 : 0}|${b.isDca ? 1 : 0}`;
             return keyA.localeCompare(keyB);
           })
       : [];
 
-    const transactionsSource = payload.transactions && typeof payload.transactions === 'object' && !Array.isArray(payload.transactions)
-      ? payload.transactions
-      : {};
+    const transactionsSource = isPlainObject(payload.transactions) ? payload.transactions : {};
     const transactions = {};
     Object.keys(transactionsSource)
       .map(normalizeCode)
@@ -2333,11 +2594,41 @@ export default function HomePage() {
             const price = normalizeNumber(t?.price);
             const date = t?.date || '';
             const timestamp = Number.isFinite(t?.timestamp) ? t.timestamp : 0;
-            return { id, type, share, amount, price, date, timestamp };
+            const isDca = !!t?.isDca;
+            return { id, type, share, amount, price, date, timestamp, isDca };
           })
           .filter((t) => t.id || t.timestamp)
           .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         if (normalized.length > 0) transactions[code] = normalized;
+      });
+
+    const dcaSource = isPlainObject(payload.dcaPlans) ? payload.dcaPlans : {};
+    const dcaPlans = {};
+    Object.keys(dcaSource)
+      .map(normalizeCode)
+      .filter((code) => uniqueFundCodes.includes(code))
+      .sort()
+      .forEach((code) => {
+        const plan = dcaSource[code] || {};
+        const amount = normalizeNumber(plan.amount);
+        const feeRate = normalizeNumber(plan.feeRate);
+        const cycle = ['daily', 'weekly', 'biweekly', 'monthly'].includes(plan.cycle) ? plan.cycle : '';
+        const firstDate = plan.firstDate ? String(plan.firstDate) : '';
+        const enabled = !!plan.enabled;
+        const weeklyDay = normalizeNumber(plan.weeklyDay);
+        const monthlyDay = normalizeNumber(plan.monthlyDay);
+        const lastDate = plan.lastDate ? String(plan.lastDate) : '';
+        if (amount === null && feeRate === null && !cycle && !firstDate && !enabled && weeklyDay === null && monthlyDay === null && !lastDate) return;
+        dcaPlans[code] = {
+          amount,
+          feeRate,
+          cycle,
+          firstDate,
+          enabled,
+          weeklyDay: weeklyDay !== null ? weeklyDay : null,
+          monthlyDay: monthlyDay !== null ? monthlyDay : null,
+          lastDate
+        };
       });
 
     const viewMode = payload.viewMode === 'list' ? 'list' : 'card';
@@ -2352,6 +2643,7 @@ export default function HomePage() {
       holdings,
       pendingTrades,
       transactions,
+      dcaPlans,
       viewMode
     });
   }
@@ -2390,6 +2682,9 @@ export default function HomePage() {
       if (!keys || keys.has('transactions')) {
         all.transactions = JSON.parse(localStorage.getItem('transactions') || '{}');
       }
+      if (!keys || keys.has('dcaPlans')) {
+        all.dcaPlans = JSON.parse(localStorage.getItem('dcaPlans') || '{}');
+      }
 
       // 如果是全量收集（keys 为 null），进行完整的数据清洗和验证逻辑
       if (!keys) {
@@ -2399,17 +2694,17 @@ export default function HomePage() {
             : []
         );
 
-        const cleanedHoldings = all.holdings && typeof all.holdings === 'object' && !Array.isArray(all.holdings)
+        const cleanedHoldings = isPlainObject(all.holdings)
           ? Object.entries(all.holdings).reduce((acc, [code, value]) => {
-            if (!fundCodes.has(code) || !value || typeof value !== 'object') return acc;
-            const parsedShare = typeof value.share === 'number'
+            if (!fundCodes.has(code) || !isPlainObject(value)) return acc;
+            const parsedShare = isNumber(value.share)
               ? value.share
-              : typeof value.share === 'string'
+              : isString(value.share)
                 ? Number(value.share)
                 : NaN;
-            const parsedCost = typeof value.cost === 'number'
+            const parsedCost = isNumber(value.cost)
               ? value.cost
-              : typeof value.cost === 'string'
+              : isString(value.cost)
                 ? Number(value.cost)
                 : NaN;
             const nextShare = Number.isFinite(parsedShare) ? parsedShare : null;
@@ -2440,6 +2735,14 @@ export default function HomePage() {
             }))
           : [];
 
+        const cleanedDcaPlans = isPlainObject(all.dcaPlans)
+          ? Object.entries(all.dcaPlans).reduce((acc, [code, plan]) => {
+              if (!fundCodes.has(code) || !isPlainObject(plan)) return acc;
+              acc[code] = plan;
+              return acc;
+            }, {})
+          : {};
+
         return {
           funds: all.funds,
           favorites: cleanedFavorites,
@@ -2449,6 +2752,8 @@ export default function HomePage() {
           refreshMs: all.refreshMs,
           holdings: cleanedHoldings,
           pendingTrades: all.pendingTrades,
+          transactions: all.transactions,
+          dcaPlans: cleanedDcaPlans,
           viewMode: all.viewMode
         };
       }
@@ -2463,9 +2768,12 @@ export default function HomePage() {
         favorites: [],
         groups: [],
         collapsedCodes: [],
+        collapsedTrends: [],
         refreshMs: 30000,
         holdings: {},
         pendingTrades: [],
+        transactions: {},
+        dcaPlans: {},
         viewMode: 'card',
         exportedAt: nowInTz().toISOString()
       };
@@ -2473,7 +2781,7 @@ export default function HomePage() {
   };
 
   const applyCloudConfig = async (cloudData, cloudUpdatedAt) => {
-    if (!cloudData || typeof cloudData !== 'object') return;
+    if (!isPlainObject(cloudData)) return;
     skipSyncRef.current = true;
     try {
       if (cloudUpdatedAt) {
@@ -2505,7 +2813,7 @@ export default function HomePage() {
         applyViewMode(cloudData.viewMode);
       }
 
-      const nextHoldings = cloudData.holdings && typeof cloudData.holdings === 'object' ? cloudData.holdings : {};
+      const nextHoldings = isPlainObject(cloudData.holdings) ? cloudData.holdings : {};
       setHoldings(nextHoldings);
       storageHelper.setItem('holdings', JSON.stringify(nextHoldings));
 
@@ -2515,9 +2823,18 @@ export default function HomePage() {
       setPendingTrades(nextPendingTrades);
       storageHelper.setItem('pendingTrades', JSON.stringify(nextPendingTrades));
 
-      const nextTransactions = cloudData.transactions && typeof cloudData.transactions === 'object' ? cloudData.transactions : {};
+      const nextTransactions = isPlainObject(cloudData.transactions) ? cloudData.transactions : {};
       setTransactions(nextTransactions);
       storageHelper.setItem('transactions', JSON.stringify(nextTransactions));
+
+      const cloudDca = isPlainObject(cloudData.dcaPlans) ? cloudData.dcaPlans : {};
+      const nextDcaPlans = Object.entries(cloudDca).reduce((acc, [code, plan]) => {
+        if (!nextFundCodes.has(code) || !isPlainObject(plan)) return acc;
+        acc[code] = plan;
+        return acc;
+      }, {});
+      setDcaPlans(nextDcaPlans);
+      storageHelper.setItem('dcaPlans', JSON.stringify(nextDcaPlans));
 
       if (nextFunds.length) {
         const codes = Array.from(new Set(nextFunds.map((f) => f.code)));
@@ -2548,7 +2865,7 @@ export default function HomePage() {
         setCloudConfigModal({ open: true, userId, type: 'empty' });
         return;
       }
-      if (data?.data && typeof data.data === 'object' && Object.keys(data.data).length > 0) {
+      if (data?.data && isPlainObject(data.data) && Object.keys(data.data).length > 0) {
         const localPayload = collectLocalPayload();
         const localComparable = getComparablePayload(localPayload);
         const cloudComparable = getComparablePayload(data.data);
@@ -2669,6 +2986,7 @@ export default function HomePage() {
         holdings: JSON.parse(localStorage.getItem('holdings') || '{}'),
         pendingTrades: JSON.parse(localStorage.getItem('pendingTrades') || '[]'),
         transactions: JSON.parse(localStorage.getItem('transactions') || '{}'),
+        dcaPlans: JSON.parse(localStorage.getItem('dcaPlans') || '{}'),
         exportedAt: nowInTz().toISOString()
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -2715,7 +3033,7 @@ export default function HomePage() {
       if (!file) return;
       const text = await file.text();
       const data = JSON.parse(text);
-      if (data && typeof data === 'object') {
+      if (isPlainObject(data)) {
         // 从 localStorage 读取最新数据进行合并，防止状态滞后导致的数据丢失
         const currentFunds = JSON.parse(localStorage.getItem('funds') || '[]');
         const currentFavorites = JSON.parse(localStorage.getItem('favorites') || '[]');
@@ -2723,6 +3041,7 @@ export default function HomePage() {
         const currentCollapsed = JSON.parse(localStorage.getItem('collapsedCodes') || '[]');
         const currentTrends = JSON.parse(localStorage.getItem('collapsedTrends') || '[]');
         const currentPendingTrades = JSON.parse(localStorage.getItem('pendingTrades') || '[]');
+        const currentDcaPlans = JSON.parse(localStorage.getItem('dcaPlans') || '{}');
 
         let mergedFunds = currentFunds;
         let appendedCodes = [];
@@ -2773,7 +3092,7 @@ export default function HomePage() {
           storageHelper.setItem('collapsedTrends', JSON.stringify(mergedTrends));
         }
 
-        if (typeof data.refreshMs === 'number' && data.refreshMs >= 5000) {
+        if (isNumber(data.refreshMs) && data.refreshMs >= 5000) {
           setRefreshMs(data.refreshMs);
           setTempSeconds(Math.round(data.refreshMs / 1000));
           storageHelper.setItem('refreshMs', String(data.refreshMs));
@@ -2782,13 +3101,13 @@ export default function HomePage() {
           applyViewMode(data.viewMode);
         }
 
-        if (data.holdings && typeof data.holdings === 'object') {
+        if (isPlainObject(data.holdings)) {
           const mergedHoldings = { ...JSON.parse(localStorage.getItem('holdings') || '{}'), ...data.holdings };
           setHoldings(mergedHoldings);
           storageHelper.setItem('holdings', JSON.stringify(mergedHoldings));
         }
 
-        if (data.transactions && typeof data.transactions === 'object') {
+        if (isPlainObject(data.transactions)) {
              const currentTransactions = JSON.parse(localStorage.getItem('transactions') || '{}');
              const mergedTransactions = { ...currentTransactions };
              Object.entries(data.transactions).forEach(([code, txs]) => {
@@ -2822,6 +3141,12 @@ export default function HomePage() {
           const mergedPending = Array.from(mergedPendingMap.values());
           setPendingTrades(mergedPending);
           storageHelper.setItem('pendingTrades', JSON.stringify(mergedPending));
+        }
+
+        if (isPlainObject(data.dcaPlans)) {
+          const mergedDca = { ...(isPlainObject(currentDcaPlans) ? currentDcaPlans : {}), ...data.dcaPlans };
+          setDcaPlans(mergedDca);
+          storageHelper.setItem('dcaPlans', JSON.stringify(mergedDca));
         }
 
         // 导入成功后，仅刷新新追加的基金
@@ -2858,6 +3183,7 @@ export default function HomePage() {
       holdingModal.open ||
       actionModal.open ||
       tradeModal.open ||
+      dcaModal.open ||
       !!clearConfirm ||
       donateOpen ||
       !!fundDeleteConfirm ||
@@ -3111,22 +3437,13 @@ export default function HomePage() {
               </svg>
             </button>
           )}
-          <div
-            className="refresh-btn-wrap"
-            style={{ '--progress': refreshProgress }}
-            title={`刷新周期 ${Math.round(refreshMs / 1000)} 秒`}
-          >
-            <button
-              className="icon-button"
-              aria-label="立即刷新"
-              onClick={manualRefresh}
-              disabled={refreshing || funds.length === 0}
-              aria-busy={refreshing}
-              title="立即刷新"
-            >
-              <RefreshIcon className={refreshing ? 'spin' : ''} width="18" height="18" />
-            </button>
-          </div>
+          <RefreshButton
+            refreshMs={refreshMs}
+            manualRefresh={manualRefresh}
+            refreshing={refreshing}
+            fundsLength={funds.length}
+            refreshCycleStartRef={refreshCycleStartRef}
+          />
           {/*<button*/}
           {/*  className="icon-button"*/}
           {/*  aria-label="打开设置"*/}
@@ -3469,7 +3786,51 @@ export default function HomePage() {
                   className={viewMode === 'card' ? 'grid' : 'table-container glass'}
                 >
                   <div className={viewMode === 'card' ? 'grid col-12' : ''} style={viewMode === 'card' ? { gridColumn: 'span 12', gap: 16 } : {}}>
-                    {viewMode === 'list' && (
+                    {/* PC 列表：使用 PcFundTable + 右侧冻结操作列 */}
+                    {viewMode === 'list' && !isMobile && (
+                        <div className="table-pc-wrap">
+                          <div className="table-scroll-area">
+                            <div className="table-scroll-area-inner">
+                              <PcFundTable
+                                data={pcFundTableData}
+                                refreshing={refreshing}
+                                currentTab={currentTab}
+                                favorites={favorites}
+                                sortBy={sortBy}
+                                onReorder={handleReorder}
+                                onRemoveFund={(row) => {
+                                  if (refreshing) return;
+                                  if (!row || !row.code) return;
+                                  requestRemoveFund({ code: row.code, name: row.fundName });
+                                }}
+                                onToggleFavorite={(row) => {
+                                  if (!row || !row.code) return;
+                                  toggleFavorite(row.code);
+                                }}
+                                onRemoveFromGroup={(row) => {
+                                  if (!row || !row.code) return;
+                                  removeFundFromCurrentGroup(row.code);
+                                }}
+                                onHoldingAmountClick={(row, meta) => {
+                                  if (!row || !row.code) return;
+                                  const fund = row.rawFund || { code: row.code, name: row.fundName };
+                                  if (meta?.hasHolding) {
+                                    setActionModal({ open: true, fund });
+                                  } else {
+                                    setHoldingModal({ open: true, fund });
+                                  }
+                                }}
+                                onHoldingProfitClick={(row) => {
+                                  if (!row || !row.code) return;
+                                  if (row.holdingProfitValue == null) return;
+                                  setPercentModes(prev => ({ ...prev, [row.code]: !prev[row.code] }));
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                    )}
+                    {viewMode === 'list' && isMobile && (
                       <div className="table-header-row">
                         <div className="table-header-cell">基金名称</div>
                         <div className="table-header-cell text-right">净值/估值</div>
@@ -3482,7 +3843,8 @@ export default function HomePage() {
                       </div>
                     )}
                     <AnimatePresence mode="popLayout">
-                      {displayFunds.map((f) => (
+                      {displayFunds.map((f) =>
+                        (viewMode === 'list' && !isMobile) ? null : (
                         <motion.div
                           layout="position"
                           key={f.code}
@@ -3582,12 +3944,21 @@ export default function HomePage() {
                                   )}
                                   <div className="title-text">
                                     <span
-                                      className={`name-text ${f.jzrq === todayStr ? 'updated' : ''}`}
-                                      title={f.jzrq === todayStr ? "今日净值已更新" : ""}
+                                      className="name-text"
                                     >
                                       {f.name}
                                     </span>
-                                    <span className="muted code-text">#{f.code}</span>
+                                    <span
+                                      className="muted code-text"
+                                      title={f.jzrq === todayStr ? "今日净值已更新" : ""}
+                                    >
+                                      {(() => {
+                                        const holding = holdings[f.code];
+                                        const profit = getHoldingProfit(f, holding);
+                                        return profit ? `¥${profit.amount.toFixed(2)}` : `#${f.code}`;
+                                      })()}
+                                      {f.jzrq === todayStr && <span className="updated-indicator">✓</span>}
+                                    </span>
                                   </div>
                                 </div>
                                 {(() => {
@@ -3632,7 +4003,7 @@ export default function HomePage() {
                                         </div>
                                         <div className="table-cell text-right change-cell">
                                           <span className={f.estPricedCoverage > 0.05 ? (f.estGszzl > 0 ? 'up' : f.estGszzl < 0 ? 'down' : '') : (Number(f.gszzl) > 0 ? 'up' : Number(f.gszzl) < 0 ? 'down' : '')} style={{ fontWeight: 700 }}>
-                                            {f.estPricedCoverage > 0.05 ? `${f.estGszzl > 0 ? '+' : ''}${f.estGszzl.toFixed(2)}%` : (typeof f.gszzl === 'number' ? `${f.gszzl > 0 ? '+' : ''}${f.gszzl.toFixed(2)}%` : f.gszzl ?? '—')}
+                                            {f.estPricedCoverage > 0.05 ? `${f.estGszzl > 0 ? '+' : ''}${f.estGszzl.toFixed(2)}%` : (isNumber(f.gszzl) ? `${f.gszzl > 0 ? '+' : ''}${f.gszzl.toFixed(2)}%` : f.gszzl ?? '—')}
                                           </span>
                                         </div>
                                       </>
@@ -3766,12 +4137,15 @@ export default function HomePage() {
                                     )}
                                     <div className="title-text">
                                       <span
-                                        className={`name-text ${f.jzrq === todayStr ? 'updated' : ''}`}
+                                        className={`name-text`}
                                         title={f.jzrq === todayStr ? "今日净值已更新" : ""}
                                       >
                                         {f.name}
                                       </span>
-                                      <span className="muted">#{f.code}</span>
+                                      <span className="muted">
+                                        #{f.code}
+                                        {f.jzrq === todayStr && <span className="updated-indicator">✓</span>}
+                                      </span>
                                     </div>
                                   </div>
 
@@ -3807,13 +4181,26 @@ export default function HomePage() {
                                     <>
                                       {(() => {
                                         const hasTodayData = f.jzrq === todayStr;
-                                        const shouldHideChange = isTradingDay && !hasTodayData;
+                                        let isYesterdayChange = false;
+                                        let isPreviousTradingDay = false;
+                                        if (!hasTodayData && isString(f.jzrq)) {
+                                          const today = toTz(todayStr).startOf('day');
+                                          const jzDate = toTz(f.jzrq).startOf('day');
+                                          const yesterday = today.clone().subtract(1, 'day');
+                                          if (jzDate.isSame(yesterday, 'day')) {
+                                            isYesterdayChange = true;
+                                          } else if (jzDate.isBefore(yesterday, 'day')) {
+                                            isPreviousTradingDay = true;
+                                          }
+                                        }
+                                        const shouldHideChange = isTradingDay && !hasTodayData && !isYesterdayChange && !isPreviousTradingDay;
 
                                         if (shouldHideChange) return null;
 
+                                        const changeLabel = hasTodayData ? '涨跌幅' : (isYesterdayChange ? '昨日涨跌幅' : (isPreviousTradingDay ? '上一交易日涨跌幅' : '涨跌幅'));
                                         return (
                                           <Stat
-                                            label="涨跌幅"
+                                            label={changeLabel}
                                             value={f.zzl !== undefined ? `${f.zzl > 0 ? '+' : ''}${Number(f.zzl).toFixed(2)}%` : ''}
                                             delta={f.zzl}
                                           />
@@ -3822,7 +4209,7 @@ export default function HomePage() {
                                       <Stat label="估值净值" value={f.estPricedCoverage > 0.05 ? f.estGsz.toFixed(4) : (f.gsz ?? '—')} />
                                       <Stat
                                         label="估值涨跌幅"
-                                        value={f.estPricedCoverage > 0.05 ? `${f.estGszzl > 0 ? '+' : ''}${f.estGszzl.toFixed(2)}%` : (typeof f.gszzl === 'number' ? `${f.gszzl > 0 ? '+' : ''}${f.gszzl.toFixed(2)}%` : f.gszzl ?? '—')}
+                                        value={f.estPricedCoverage > 0.05 ? `${f.estGszzl > 0 ? '+' : ''}${f.estGszzl.toFixed(2)}%` : (isNumber(f.gszzl) ? `${f.gszzl > 0 ? '+' : ''}${f.gszzl.toFixed(2)}%` : f.gszzl ?? '—')}
                                         delta={f.estPricedCoverage > 0.05 ? f.estGszzl : (Number(f.gszzl) || 0)}
                                       />
                                     </>
@@ -3899,12 +4286,27 @@ export default function HomePage() {
                                     基于 {Math.round(f.estPricedCoverage * 100)}% 持仓估算
                                   </div>
                                 )}
-                                {Array.isArray(valuationSeries[f.code]) && valuationSeries[f.code].length >= 2 && (
-                                  <FundIntradayChart
-                                    series={valuationSeries[f.code]}
-                                    referenceNav={f.dwjz != null ? Number(f.dwjz) : undefined}
-                                  />
-                                )}
+                                {(() => {
+                                  const showIntraday = Array.isArray(valuationSeries[f.code]) && valuationSeries[f.code].length >= 2;
+                                  if (!showIntraday) return null;
+
+                                  // 如果今日日期大于估值日期，说明是历史估值，不显示分时图
+                                  if (f.gztime && toTz(todayStr).startOf('day').isAfter(toTz(f.gztime).startOf('day'))) {
+                                    return null;
+                                  }
+
+                                  // 如果 jzrq 等于估值日期或在此之前（意味着净值已经更新到了估值日期，或者是历史数据），则隐藏实时估值分时
+                                  if (f.jzrq && f.gztime && toTz(f.jzrq).startOf('day').isSameOrAfter(toTz(f.gztime).startOf('day'))) {
+                                    return null;
+                                  }
+
+                                  return (
+                                    <FundIntradayChart
+                                      series={valuationSeries[f.code]}
+                                      referenceNav={f.dwjz != null ? Number(f.dwjz) : undefined}
+                                    />
+                                  );
+                                })()}
                                 <div
                                   style={{ marginBottom: 8, cursor: 'pointer', userSelect: 'none' }}
                                   className="title"
@@ -3941,7 +4343,7 @@ export default function HomePage() {
                                             <div className="item" key={idx}>
                                               <span className="name">{h.name}</span>
                                               <div className="values">
-                                                {typeof h.change === 'number' && (
+                                                {isNumber(h.change) && (
                                                   <span className={`badge ${h.change > 0 ? 'up' : h.change < 0 ? 'down' : ''}`} style={{ marginRight: 8 }}>
                                                     {h.change > 0 ? '+' : ''}{h.change.toFixed(2)}%
                                                   </span>
@@ -3967,7 +4369,8 @@ export default function HomePage() {
                             )}
                           </motion.div>
                         </motion.div>
-                      ))}
+                        )
+                      )}
                     </AnimatePresence>
                   </div>
                 </motion.div>
@@ -4116,6 +4519,39 @@ export default function HomePage() {
                     return next;
                 });
                 showToast('已撤销待处理交易', 'success');
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {dcaModal.open && (
+          <DcaModal
+            fund={dcaModal.fund}
+            plan={dcaPlans[dcaModal.fund?.code]}
+            onClose={() => setDcaModal({ open: false, fund: null })}
+            onConfirm={(config) => {
+              const code = config?.fundCode || dcaModal.fund?.code;
+              if (!code) {
+                setDcaModal({ open: false, fund: null });
+                return;
+              }
+              setDcaPlans(prev => {
+                const next = { ...(prev || {}) };
+                next[code] = {
+                  amount: config.amount,
+                  feeRate: config.feeRate,
+                  cycle: config.cycle,
+                  firstDate: config.firstDate,
+                  weeklyDay: config.weeklyDay ?? null,
+                  monthlyDay: config.monthlyDay ?? null,
+                  enabled: config.enabled !== false
+                };
+                storageHelper.setItem('dcaPlans', JSON.stringify(next));
+                return next;
+              });
+              setDcaModal({ open: false, fund: null });
+              showToast('已保存定投计划', 'success');
             }}
           />
         )}
@@ -4362,4 +4798,3 @@ export default function HomePage() {
     </div>
   );
 }
-
