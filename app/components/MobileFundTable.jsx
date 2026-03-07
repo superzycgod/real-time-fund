@@ -29,6 +29,7 @@ import { ExitIcon, SettingsIcon, StarIcon } from './Icons';
 const MOBILE_NON_FROZEN_COLUMN_IDS = [
   'yesterdayChangePercent',
   'estimateChangePercent',
+  'totalChangePercent',
   'todayProfit',
   'holdingProfit',
   'latestNav',
@@ -37,8 +38,9 @@ const MOBILE_NON_FROZEN_COLUMN_IDS = [
 const MOBILE_COLUMN_HEADERS = {
   latestNav: '最新净值',
   estimateNav: '估算净值',
-  yesterdayChangePercent: '昨日涨跌幅',
-  estimateChangePercent: '估值涨跌幅',
+  yesterdayChangePercent: '昨日涨幅',
+  estimateChangePercent: '估值涨幅',
+  totalChangePercent: '估算收益',
   todayProfit: '当日收益',
   holdingProfit: '持有收益',
 };
@@ -192,6 +194,7 @@ export default function MobileFundTable({
           return [...valid, ...missing];
         })() : null,
         mobileTableColumnVisibility: visibility,
+        mobileShowFullFundName: group.mobileShowFullFundName === true,
       };
     });
     return byGroup;
@@ -200,6 +203,7 @@ export default function MobileFundTable({
   const [configByGroup, setConfigByGroup] = useState(getInitialMobileConfigByGroup);
 
   const currentGroupMobile = configByGroup[groupKey];
+  const showFullFundName = currentGroupMobile?.mobileShowFullFundName ?? false;
   const defaultOrder = [...MOBILE_NON_FROZEN_COLUMN_IDS];
   const defaultVisibility = (() => {
     const o = {};
@@ -247,9 +251,32 @@ export default function MobileFundTable({
       : nextOrUpdater;
     persistMobileGroupConfig({ mobileTableColumnVisibility: next });
   };
+
+  const persistShowFullFundName = (show) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem('customSettings');
+      const parsed = raw ? JSON.parse(raw) : {};
+      const group = parsed[groupKey] && typeof parsed[groupKey] === 'object' ? { ...parsed[groupKey] } : {};
+      group.mobileShowFullFundName = show;
+      parsed[groupKey] = group;
+      window.localStorage.setItem('customSettings', JSON.stringify(parsed));
+      setConfigByGroup((prev) => ({ 
+        ...prev, 
+        [groupKey]: { ...prev[groupKey], mobileShowFullFundName: show } 
+      }));
+      onCustomSettingsChange?.();
+    } catch {}
+  };
+
+  const handleToggleShowFullFundName = (show) => {
+    persistShowFullFundName(show);
+  };
+
   const [settingModalOpen, setSettingModalOpen] = useState(false);
   const tableContainerRef = useRef(null);
   const [tableContainerWidth, setTableContainerWidth] = useState(0);
+  const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
     const el = tableContainerRef.current;
@@ -261,6 +288,17 @@ export default function MobileFundTable({
     return () => ro.disconnect();
   }, []);
 
+  useEffect(() => {
+    const el = tableContainerRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      setIsScrolled(el.scrollLeft > 0);
+    };
+    handleScroll();
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
   const NAME_CELL_WIDTH = 140;
   const GAP = 12;
   const LAST_COLUMN_EXTRA = 12;
@@ -270,6 +308,7 @@ export default function MobileFundTable({
     estimateNav: 64,
     yesterdayChangePercent: 72,
     estimateChangePercent: 80,
+    totalChangePercent: 80,
     todayProfit: 80,
     holdingProfit: 80,
   };
@@ -306,7 +345,7 @@ export default function MobileFundTable({
   };
 
   // 移动端名称列：无拖拽把手，长按整行触发排序
-  const MobileFundNameCell = ({ info }) => {
+  const MobileFundNameCell = ({ info, showFullFundName }) => {
     const original = info.row.original || {};
     const code = original.code;
     const isUpdated = original.isUpdated;
@@ -344,7 +383,10 @@ export default function MobileFundTable({
           </button>
         )}
         <div className="title-text">
-          <span className="name-text" title={isUpdated ? '今日净值已更新' : ''}>
+          <span 
+            className={`name-text ${showFullFundName ? 'show-full' : ''}`} 
+            title={isUpdated ? '今日净值已更新' : ''}
+          >
             {info.getValue() ?? '—'}
           </span>
           {holdingAmountDisplay ? (
@@ -429,7 +471,7 @@ export default function MobileFundTable({
             </button>
           </div>
         ),
-        cell: (info) => <MobileFundNameCell info={info} />,
+        cell: (info) => <MobileFundNameCell info={info} showFullFundName={showFullFundName} />,
         meta: { align: 'left', cellClassName: 'name-cell', width: columnWidthMap.fundName },
       },
       {
@@ -458,7 +500,7 @@ export default function MobileFundTable({
       },
       {
         accessorKey: 'yesterdayChangePercent',
-        header: '昨日涨跌幅',
+        header: '昨日涨幅',
         cell: (info) => {
           const original = info.row.original || {};
           const value = original.yesterdayChangeValue;
@@ -477,7 +519,7 @@ export default function MobileFundTable({
       },
       {
         accessorKey: 'estimateChangePercent',
-        header: '估值涨跌幅',
+        header: '估值涨幅',
         cell: (info) => {
           const original = info.row.original || {};
           const value = original.estimateChangeValue;
@@ -495,6 +537,36 @@ export default function MobileFundTable({
           );
         },
         meta: { align: 'right', cellClassName: 'est-change-cell', width: columnWidthMap.estimateChangePercent },
+      },
+      {
+        accessorKey: 'totalChangePercent',
+        header: '估算收益',
+        cell: (info) => {
+          const original = info.row.original || {};
+          const value = original.estimateProfitValue;
+          const hasProfit = value != null;
+          const cls = hasProfit ? (value > 0 ? 'up' : value < 0 ? 'down' : '') : 'muted';
+          const amountStr = hasProfit ? (original.estimateProfit ?? '') : '—';
+          const percentStr = original.estimateProfitPercent ?? '';
+
+          return (
+            <div style={{ width: '100%' }}>
+              <span className={cls} style={{ display: 'block', width: '100%', fontWeight: 700 }}>
+                <FitText maxFontSize={14} minFontSize={10}>
+                  {amountStr}
+                </FitText>
+              </span>
+              {percentStr ? (
+                <span className={`${cls} estimate-profit-percent`} style={{ display: 'block', width: '100%', fontSize: '0.75em', opacity: 0.9, fontWeight: 500 }}>
+                  <FitText maxFontSize={11} minFontSize={9}>
+                    {percentStr}
+                  </FitText>
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+        meta: { align: 'right', cellClassName: 'total-change-cell', width: columnWidthMap.totalChangePercent },
       },
       {
         accessorKey: 'todayProfit',
@@ -555,7 +627,7 @@ export default function MobileFundTable({
         meta: { align: 'right', cellClassName: 'holding-cell', width: columnWidthMap.holdingProfit },
       },
     ],
-    [currentTab, favorites, refreshing, columnWidthMap]
+    [currentTab, favorites, refreshing, columnWidthMap, showFullFundName]
   );
 
   const table = useReactTable({
@@ -656,13 +728,17 @@ export default function MobileFundTable({
   })();
 
   const getPinClass = (columnId, isHeader) => {
-    if (columnId === 'fundName') return isHeader ? 'table-header-cell-pin-left' : 'table-cell-pin-left';
+    if (columnId === 'fundName') {
+      const baseClass = isHeader ? 'table-header-cell-pin-left' : 'table-cell-pin-left';
+      const scrolledClass = isScrolled ? 'is-scrolled' : '';
+      return `${baseClass} ${scrolledClass}`.trim();
+    }
     return '';
   };
 
   const getAlignClass = (columnId) => {
     if (columnId === 'fundName') return '';
-    if (['latestNav', 'estimateNav', 'yesterdayChangePercent', 'estimateChangePercent', 'todayProfit', 'holdingProfit'].includes(columnId)) return 'text-right';
+    if (['latestNav', 'estimateNav', 'yesterdayChangePercent', 'estimateChangePercent', 'totalChangePercent', 'todayProfit', 'holdingProfit'].includes(columnId)) return 'text-right';
     return 'text-right';
   };
 
@@ -773,6 +849,8 @@ export default function MobileFundTable({
         onToggleColumnVisibility={handleToggleMobileColumnVisibility}
         onResetColumnOrder={handleResetMobileColumnOrder}
         onResetColumnVisibility={handleResetMobileColumnVisibility}
+        showFullFundName={showFullFundName}
+        onToggleShowFullFundName={handleToggleShowFullFundName}
       />
     </div>
   );
