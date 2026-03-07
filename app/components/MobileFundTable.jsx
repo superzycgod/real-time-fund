@@ -276,6 +276,7 @@ export default function MobileFundTable({
   const [settingModalOpen, setSettingModalOpen] = useState(false);
   const tableContainerRef = useRef(null);
   const [tableContainerWidth, setTableContainerWidth] = useState(0);
+  const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
     const el = tableContainerRef.current;
@@ -285,6 +286,17 @@ export default function MobileFundTable({
     const ro = new ResizeObserver(updateWidth);
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = tableContainerRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      setIsScrolled(el.scrollLeft > 0);
+    };
+    handleScroll();
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
   }, []);
 
   const NAME_CELL_WIDTH = 140;
@@ -716,7 +728,11 @@ export default function MobileFundTable({
   })();
 
   const getPinClass = (columnId, isHeader) => {
-    if (columnId === 'fundName') return isHeader ? 'table-header-cell-pin-left' : 'table-cell-pin-left';
+    if (columnId === 'fundName') {
+      const baseClass = isHeader ? 'table-header-cell-pin-left' : 'table-cell-pin-left';
+      const scrolledClass = isScrolled ? 'is-scrolled' : '';
+      return `${baseClass} ${scrolledClass}`.trim();
+    }
     return '';
   };
 

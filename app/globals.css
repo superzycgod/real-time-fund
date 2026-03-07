@@ -1586,13 +1586,17 @@ input[type="number"] {
     position: sticky;
     left: 0;
     z-index: 2;
-    box-shadow: 4px 0 10px -2px rgba(0, 0, 0, 0.12);
-    border-right: 1px solid rgba(0, 0, 0, 0.08);
     border-bottom: none;
   }
 
-  [data-theme="light"] .mobile-fund-table .table-header-cell-pin-left,
-  [data-theme="light"] .mobile-fund-table .table-cell-pin-left {
+  .mobile-fund-table .table-header-cell-pin-left .is-scrolled,
+  .mobile-fund-table .table-cell-pin-left .is-scrolled {
+    box-shadow: 4px 0 10px -2px rgba(0, 0, 0, 0.12);
+    border-right: 1px solid rgba(0, 0, 0, 0.08);
+  }
+
+  [data-theme="light"] .mobile-fund-table .table-header-cell-pin-left .is-scrolled,
+  [data-theme="light"] .mobile-fund-table .table-cell-pin-left .is-scrolled {
     box-shadow: 4px 0 10px -2px rgba(0, 0, 0, 0.08);
     border-right-color: rgba(0, 0, 0, 0.06);
   }
