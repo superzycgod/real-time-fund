@@ -198,6 +198,7 @@ export default function MarketIndexAccordion({
   onHeightChange,
   isMobile,
   onCustomSettingsChange,
+  refreshing = false,
 }) {
   const [indices, setIndices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -222,8 +223,9 @@ export default function MarketIndexAccordion({
     };
   }, [onHeightChange, loading, indices.length]);
 
-  useEffect(() => {
+  const loadIndices = () => {
     let cancelled = false;
+    setLoading(true);
     fetchMarketIndices()
       .then((data) => {
         if (!cancelled) setIndices(Array.isArray(data) ? data : []);
@@ -234,8 +236,23 @@ export default function MarketIndexAccordion({
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
+  };
+
+  useEffect(() => {
+    // 初次挂载时加载一次指数
+    const cleanup = loadIndices();
+    return cleanup;
   }, []);
+
+  useEffect(() => {
+    // 跟随基金刷新节奏：每次开始刷新时重新拉取指数
+    if (!refreshing) return;
+    const cleanup = loadIndices();
+    return cleanup;
+  }, [refreshing]);
 
   // 初始化选中指数（本地偏好 > 默认集合）
   useEffect(() => {
