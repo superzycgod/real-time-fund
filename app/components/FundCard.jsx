@@ -53,6 +53,7 @@ export default function FundCard({
   dcaPlans,
   holdings,
   percentModes,
+  todayPercentModes,
   valuationSeries,
   collapsedCodes,
   collapsedTrends,
@@ -67,6 +68,7 @@ export default function FundCard({
   onHoldingClick,
   onActionClick,
   onPercentModeToggle,
+  onTodayPercentModeToggle,
   onToggleCollapse,
   onToggleTrendCollapse,
   layoutMode = 'card', // 'card' | 'drawer'，drawer 时前10重仓与业绩走势以 Tabs 展示
@@ -267,8 +269,42 @@ export default function FundCard({
                 {masked ? '******' : `¥${profit.amount.toFixed(2)}`}
               </span>
             </div>
-            <div className="stat" style={{ flexDirection: 'column', gap: 4 }}>
-              <span className="label">当日收益</span>
+            {holding?.firstPurchaseDate && !masked && (() => {
+              const today = dayjs.tz(todayStr, TZ);
+              const purchaseDate = dayjs.tz(holding.firstPurchaseDate, TZ);
+              if (!purchaseDate.isValid()) return null;
+              const days = today.diff(purchaseDate, 'day');
+              return (
+                <div className="stat" style={{ flexDirection: 'column', gap: 4 }}>
+                  <span className="label">持有天数</span>
+                  <span className="value">
+                    {days}天
+                  </span>
+                </div>
+              );
+            })()}
+            <div
+              className="stat"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (profit.profitToday != null) {
+                  onTodayPercentModeToggle?.(f.code);
+                }
+              }}
+              style={{
+                cursor: profit.profitToday != null ? 'pointer' : 'default',
+                flexDirection: 'column',
+                gap: 4,
+              }}
+              title={profit.profitToday != null ? '点击切换金额/百分比' : ''}
+            >
+              <span
+                className="label"
+                style={{ display: 'flex', alignItems: 'center', gap: 1 }}
+              >
+                当日收益{todayPercentModes?.[f.code] ? '(%)' : ''}
+                {profit.profitToday != null && <SwitchIcon />}
+              </span>
               <span
                 className={`value ${
                   profit.profitToday != null
@@ -283,7 +319,16 @@ export default function FundCard({
                 {profit.profitToday != null
                   ? masked
                     ? '******'
-                    : `${profit.profitToday > 0 ? '+' : profit.profitToday < 0 ? '-' : ''}¥${Math.abs(profit.profitToday).toFixed(2)}`
+                    : <>
+                        {profit.profitToday > 0 ? '+' : profit.profitToday < 0 ? '-' : ''}
+                        {todayPercentModes?.[f.code]
+                          ? `${Math.abs(
+                              holding?.cost * holding?.share
+                                ? (profit.profitToday / (holding.cost * holding.share)) * 100
+                                : 0,
+                            ).toFixed(2)}%`
+                          : `¥${Math.abs(profit.profitToday).toFixed(2)}`}
+                      </>
                   : '--'}
               </span>
             </div>
@@ -382,6 +427,15 @@ export default function FundCard({
           </TabsList>
           {hasHoldings && (
             <TabsContent value="holdings" className="mt-3 outline-none">
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  marginBottom: 4,
+                }}
+              >
+                <span className="muted">涨跌幅 / 占比</span>
+              </div>
               <div className="list">
                 {f.holdings.map((h, idx) => (
                   <div className="item" key={idx}>
@@ -409,7 +463,8 @@ export default function FundCard({
               code={f.code}
               isExpanded
               onToggleExpand={() => onToggleTrendCollapse?.(f.code)}
-              transactions={transactions?.[f.code] || []}
+              // 未设置持仓金额时，不展示买入/卖出标记与标签
+              transactions={profit ? (transactions?.[f.code] || []) : []}
               theme={theme}
               hideHeader
             />
@@ -480,7 +535,8 @@ export default function FundCard({
             code={f.code}
             isExpanded={!collapsedTrends?.has(f.code)}
             onToggleExpand={() => onToggleTrendCollapse?.(f.code)}
-            transactions={transactions?.[f.code] || []}
+            // 未设置持仓金额时，不展示买入/卖出标记与标签
+            transactions={profit ? (transactions?.[f.code] || []) : []}
             theme={theme}
           />
         </>

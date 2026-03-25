@@ -28,22 +28,27 @@ import FitText from './FitText';
 import MobileFundCardDrawer from './MobileFundCardDrawer';
 import MobileSettingModal from './MobileSettingModal';
 import { DragIcon, ExitIcon, SettingsIcon, SortIcon, StarIcon } from './Icons';
+import { fetchRelatedSectors } from '@/app/api/fund';
 
 const MOBILE_NON_FROZEN_COLUMN_IDS = [
+  'relatedSector',
   'yesterdayChangePercent',
   'estimateChangePercent',
   'totalChangePercent',
+  'holdingDays',
   'todayProfit',
   'holdingProfit',
   'latestNav',
   'estimateNav',
 ];
 const MOBILE_COLUMN_HEADERS = {
+  relatedSector: '关联板块',
   latestNav: '最新净值',
   estimateNav: '估算净值',
   yesterdayChangePercent: '昨日涨幅',
   estimateChangePercent: '估值涨幅',
   totalChangePercent: '估算收益',
+  holdingDays: '持有天数',
   todayProfit: '当日收益',
   holdingProfit: '持有收益',
 };
@@ -233,6 +238,9 @@ export default function MobileFundTable({
   const defaultVisibility = (() => {
     const o = {};
     MOBILE_NON_FROZEN_COLUMN_IDS.forEach((id) => { o[id] = true; });
+    // 新增列：默认隐藏（用户可在表格设置中开启）
+    o.relatedSector = false;
+    o.holdingDays = false;
     return o;
   })();
 
@@ -245,7 +253,12 @@ export default function MobileFundTable({
   })();
   const mobileColumnVisibility = (() => {
     const vis = currentGroupMobile?.mobileTableColumnVisibility ?? null;
-    if (vis && typeof vis === 'object' && Object.keys(vis).length > 0) return vis;
+    if (vis && typeof vis === 'object' && Object.keys(vis).length > 0) {
+      const next = { ...vis };
+      if (next.relatedSector === undefined) next.relatedSector = false;
+      if (next.holdingDays === undefined) next.holdingDays = false;
+      return next;
+    }
     return defaultVisibility;
   })();
 
@@ -340,9 +353,14 @@ export default function MobileFundTable({
       if (!stickySummaryWrapper) return stickyTop;
 
       const wrapperRect = stickySummaryWrapper.getBoundingClientRect();
-      const isSummaryStuck = wrapperRect.top <= stickyTop + 1;
+      // 用“实际 DOM 的 top”判断 sticky 是否已生效，避免 mobile 下 stickyTop 入参与 GroupSummary 不一致导致的偏移。
+      const computedTopStr = window.getComputedStyle(stickySummaryWrapper).top;
+      const computedTop = Number.parseFloat(computedTopStr);
+      const baseTop = Number.isFinite(computedTop) ? computedTop : stickyTop;
+      const isSummaryStuck = wrapperRect.top <= baseTop + 1;
 
-      return isSummaryStuck ? stickyTop + stickySummaryWrapper.offsetHeight : stickyTop;
+      // header 使用固定定位(top)，所以也用视口坐标系下的 wrapperRect.top + 高度，确保不重叠
+      return isSummaryStuck ? wrapperRect.top + stickySummaryWrapper.offsetHeight : stickyTop;
     };
 
     const updateVerticalState = () => {
@@ -422,14 +440,59 @@ export default function MobileFundTable({
   const LAST_COLUMN_EXTRA = 12;
   const FALLBACK_WIDTHS = {
     fundName: 140,
+    relatedSector: 120,
     latestNav: 64,
     estimateNav: 64,
     yesterdayChangePercent: 72,
     estimateChangePercent: 80,
     totalChangePercent: 80,
+    holdingDays: 64,
     todayProfit: 80,
     holdingProfit: 80,
   };
+
+  const relatedSectorEnabled = mobileColumnVisibility?.relatedSector !== false;
+  const relatedSectorCacheRef = useRef(new Map());
+  const [relatedSectorByCode, setRelatedSectorByCode] = useState({});
+
+  const fetchRelatedSector = async (code) => fetchRelatedSectors(code);
+
+  const runWithConcurrency = async (items, limit, worker) => {
+    const queue = [...items];
+    const runners = Array.from({ length: Math.max(1, limit) }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        if (item == null) continue;
+         
+        await worker(item);
+      }
+    });
+    await Promise.all(runners);
+  };
+
+  useEffect(() => {
+    if (!relatedSectorEnabled) return;
+    if (!Array.isArray(data) || data.length === 0) return;
+
+    const codes = Array.from(new Set(data.map((d) => d?.code).filter(Boolean)));
+    const missing = codes.filter((code) => !relatedSectorCacheRef.current.has(code));
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      await runWithConcurrency(missing, 4, async (code) => {
+        const value = await fetchRelatedSector(code);
+        relatedSectorCacheRef.current.set(code, value);
+        if (cancelled) return;
+        setRelatedSectorByCode((prev) => {
+          if (prev[code] === value) return prev;
+          return { ...prev, [code]: value };
+        });
+      });
+    })();
+
+    return () => { cancelled = true; };
+  }, [relatedSectorEnabled, data]);
 
   const columnWidthMap = useMemo(() => {
     const visibleNonNameIds = mobileColumnOrder.filter((id) => mobileColumnVisibility[id] !== false);
@@ -456,6 +519,8 @@ export default function MobileFundTable({
     MOBILE_NON_FROZEN_COLUMN_IDS.forEach((id) => {
       allVisible[id] = true;
     });
+    allVisible.relatedSector = false;
+    allVisible.holdingDays = false;
     setMobileColumnVisibility(allVisible);
   };
   const handleToggleMobileColumnVisibility = (columnId, visible) => {
@@ -655,6 +720,22 @@ export default function MobileFundTable({
         meta: { align: 'left', cellClassName: 'name-cell', width: columnWidthMap.fundName },
       },
       {
+        id: 'relatedSector',
+        header: '关联板块',
+        cell: (info) => {
+          const original = info.row.original || {};
+          const code = original.code;
+          const value = (code && (relatedSectorByCode?.[code] ?? relatedSectorCacheRef.current.get(code))) || '';
+          const display = value || '—';
+          return (
+            <div style={{ width: '100%', textAlign: value ? 'left' : 'right', fontSize: '12px' }}>
+              {display}
+            </div>
+          );
+        },
+        meta: { align: 'left', cellClassName: 'related-sector-cell', width: columnWidthMap.relatedSector ?? 120 },
+      },
+      {
         accessorKey: 'latestNav',
         header: '最新净值',
         cell: (info) => {
@@ -775,6 +856,23 @@ export default function MobileFundTable({
         meta: { align: 'right', cellClassName: 'total-change-cell', width: columnWidthMap.totalChangePercent },
       },
       {
+        accessorKey: 'holdingDays',
+        header: '持有天数',
+        cell: (info) => {
+          const original = info.row.original || {};
+          const value = original.holdingDaysValue;
+          if (value == null) {
+            return <div className="muted" style={{ textAlign: 'right', fontSize: '12px' }}>—</div>;
+          }
+          return (
+            <div style={{ fontWeight: 700, textAlign: 'right' }}>
+              {value}
+            </div>
+          );
+        },
+        meta: { align: 'right', cellClassName: 'holding-days-cell', width: columnWidthMap.holdingDays ?? 64 },
+      },
+      {
         accessorKey: 'todayProfit',
         header: '当日收益',
         cell: (info) => {
@@ -784,7 +882,6 @@ export default function MobileFundTable({
           const cls = hasProfit ? (value > 0 ? 'up' : value < 0 ? 'down' : '') : 'muted';
           const amountStr = hasProfit ? (info.getValue() ?? '') : '—';
           const percentStr = original.todayProfitPercent ?? '';
-          const isUpdated = original.isUpdated;
           return (
             <div style={{ width: '100%' }}>
               <span className={cls} style={{ display: 'block', width: '100%', fontWeight: 700 }}>
@@ -792,7 +889,7 @@ export default function MobileFundTable({
                   {masked && hasProfit ? <span className="mask-text">******</span> : amountStr}
                 </FitText>
               </span>
-              {percentStr && !isUpdated && !masked ? (
+              {percentStr && !masked ? (
                 <span className={`${cls} today-profit-percent`} style={{ display: 'block', width: '100%', fontSize: '0.75em', opacity: 0.9, fontWeight: 500 }}>
                   <FitText maxFontSize={11} minFontSize={9}>
                     {percentStr}
@@ -834,7 +931,7 @@ export default function MobileFundTable({
         meta: { align: 'right', cellClassName: 'holding-cell', width: columnWidthMap.holdingProfit },
       },
     ],
-    [currentTab, favorites, refreshing, columnWidthMap, showFullFundName, getFundCardProps, isNameSortMode, sortBy]
+    [currentTab, favorites, refreshing, columnWidthMap, showFullFundName, getFundCardProps, isNameSortMode, sortBy, relatedSectorByCode]
   );
 
   const table = useReactTable({
@@ -945,7 +1042,7 @@ export default function MobileFundTable({
 
   const getAlignClass = (columnId) => {
     if (columnId === 'fundName') return '';
-    if (['latestNav', 'estimateNav', 'yesterdayChangePercent', 'estimateChangePercent', 'totalChangePercent', 'todayProfit', 'holdingProfit'].includes(columnId)) return 'text-right';
+    if (['latestNav', 'estimateNav', 'yesterdayChangePercent', 'estimateChangePercent', 'totalChangePercent', 'holdingDays', 'todayProfit', 'holdingProfit'].includes(columnId)) return 'text-right';
     return 'text-right';
   };
 

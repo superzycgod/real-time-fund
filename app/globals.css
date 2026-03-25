@@ -2093,9 +2093,11 @@ input[type="number"] {
   flex-shrink: 0;
 }
 
+/* 亮色主题下，PC 右侧抽屉里的 Switch 拇指使用浅色，以保证对比度 */
 [data-theme="light"] .pc-table-setting-drawer .dca-toggle-thumb {
   background: #fff;
 }
+
 
 /* 移动端表格设置底部抽屉 */
 .mobile-setting-overlay {
@@ -2536,6 +2538,13 @@ input[type="number"] {
   border-radius: 50%;
   background: #0f172a;
   transition: left 0.2s;
+}
+
+/* 亮色主题下：所有使用 dca-toggle 的拇指在浅底上统一用白色，保证对比度
+   - PC 右侧排序设置抽屉
+   - 移动端排序个性化设置 Drawer（以及其它区域） */
+[data-theme="light"] .dca-toggle-thumb {
+  background: #ffffff;
 }
 
 .dca-option-group {
@@ -3337,6 +3346,35 @@ input[type="number"] {
   background: rgba(52, 211, 153, 0.15);
   border: 1px solid rgba(52, 211, 153, 0.3);
   color: var(--success);
+}
+
+/* ========== GitHub 登录按钮样式 ========== */
+.github-login-btn {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.github-login-btn:hover {
+  border-color: var(--primary);
+  background: rgba(34, 211, 238, 0.05);
+}
+
+.github-login-btn:active {
+  transform: scale(0.98);
+}
+
+[data-theme="light"] .github-login-btn {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+[data-theme="light"] .github-login-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3af;
+}
+
+[data-theme="light"] .github-login-btn img {
+  filter: brightness(0.2);
 }
 
 .button.secondary {
