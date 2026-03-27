@@ -177,19 +177,20 @@ export default function HomePage() {
 
   const DEFAULT_SORT_RULES = [
     { id: 'default', label: '默认', enabled: true },
-    // 估值涨幅为原始名称，“涨跌幅”为别名
+    // 估值涨幅为原始名称，"涨跌幅"为别名
     { id: 'yield', label: '估值涨幅', alias: '涨跌幅', enabled: true },
     // 昨日涨幅排序：默认隐藏
     { id: 'yesterdayIncrease', label: '昨日涨幅', enabled: false },
     // 持仓金额排序：默认隐藏
     { id: 'holdingAmount', label: '持仓金额', enabled: false },
+    { id: 'todayProfit', label: '当日收益', enabled: false },
     { id: 'holding', label: '持有收益', enabled: true },
     { id: 'name', label: '基金名称', alias: '名称', enabled: true },
   ];
   const SORT_DISPLAY_MODES = new Set(['buttons', 'dropdown']);
 
   // 排序状态
-  const [sortBy, setSortBy] = useState('default'); // default, name, yield, yesterdayIncrease, holding, holdingAmount
+  const [sortBy, setSortBy] = useState('default'); // default, name, yield, yesterdayIncrease, holding, holdingAmount, todayProfit
   const [sortOrder, setSortOrder] = useState('desc'); // asc | desc
   const [sortDisplayMode, setSortDisplayMode] = useState('buttons'); // buttons | dropdown
   const [isSortLoaded, setIsSortLoaded] = useState(false);
@@ -730,6 +731,21 @@ export default function HomePage() {
           const hasB = Number.isFinite(valB);
 
           // 无昨日涨幅数据（界面展示为 `—`）的基金统一排在最后
+          if (!hasA && !hasB) return 0;
+          if (!hasA) return 1;
+          if (!hasB) return -1;
+
+          return sortOrder === 'asc' ? valA - valB : valB - valA;
+        }
+        if (sortBy === 'todayProfit') {
+          const pa = getHoldingProfit(a, holdings[a.code]);
+          const pb = getHoldingProfit(b, holdings[b.code]);
+          const valA = pa?.profitToday;
+          const valB = pb?.profitToday;
+          const hasA = valA != null && Number.isFinite(valA);
+          const hasB = valB != null && Number.isFinite(valB);
+
+          // 无当日收益数据的基金统一排在最后
           if (!hasA && !hasB) return 0;
           if (!hasA) return 1;
           if (!hasB) return -1;
