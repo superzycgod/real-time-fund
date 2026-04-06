@@ -81,3 +81,25 @@ export function clearDailyEarnings(code) {
 export function getAllDailyEarnings() {
   return getStored();
 }
+
+/**
+ * 将多基金的每日收益按日期合并为组合序列（同日 earnings 求和；组合层面 rate 无统一定义，置为 null）。
+ * @param {Record<string, unknown>} fundDailyEarningsMap - 与 localStorage 结构一致：{ [code]: Array<{date, earnings, rate?}> }
+ * @returns {Array<{ date: string, earnings: number, rate: null }>}
+ */
+export function aggregatePortfolioDailyEarnings(fundDailyEarningsMap) {
+  if (!isPlainObject(fundDailyEarningsMap)) return [];
+  const byDate = new Map();
+  for (const code of Object.keys(fundDailyEarningsMap)) {
+    const list = fundDailyEarningsMap[code];
+    if (!Array.isArray(list)) continue;
+    for (const raw of list) {
+      const item = normalizeItem(raw);
+      if (!item) continue;
+      byDate.set(item.date, (byDate.get(item.date) ?? 0) + item.earnings);
+    }
+  }
+  return [...byDate.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, earnings]) => ({ date, earnings, rate: null }));
+}

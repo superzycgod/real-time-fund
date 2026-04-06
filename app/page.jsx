@@ -65,12 +65,15 @@ import githubImg from "./assets/github.svg";
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { toast as sonnerToast } from 'sonner';
 import { recordValuation, getAllValuationSeries, clearFund } from './lib/valuationTimeseries';
-import { getAllDailyEarnings, recordDailyEarnings, clearDailyEarnings } from './lib/dailyEarnings';
+import { getAllDailyEarnings, recordDailyEarnings, clearDailyEarnings, aggregatePortfolioDailyEarnings } from './lib/dailyEarnings';
 import { loadHolidaysForYears, isTradingDay as isDateTradingDay } from './lib/tradingCalendar';
 import { parseFundTextWithLLM, fetchFundData, fetchFundNetValueRange, fetchLatestRelease, fetchShanghaiIndexDate, fetchSmartFundNetValue, searchFunds } from './api/fund';
 import packageJson from '../package.json';
 import PcFundTable from './components/PcFundTable';
 import MobileFundTable from './components/MobileFundTable';
+import MobileBottomNav from './components/MobileBottomNav';
+import MineTab from './components/MineTab';
+import PortfolioEarningsModal from './components/PortfolioEarningsModal';
 import { useFundFuzzyMatcher } from './hooks/useFundFuzzyMatcher';
 import {
   Select,
@@ -255,6 +258,10 @@ export default function HomePage() {
   const [valuationSeries, setValuationSeries] = useState(() => (typeof window !== 'undefined' ? getAllValuationSeries() : {}));
   // 每日收益序列（有持仓金额的基金才记录，用于“我的收益”折线图；同步云端）
   const [fundDailyEarnings, setFundDailyEarnings] = useState(() => (typeof window !== 'undefined' ? getAllDailyEarnings() : {}));
+  const portfolioDailySeries = useMemo(
+    () => aggregatePortfolioDailyEarnings(fundDailyEarnings),
+    [fundDailyEarnings]
+  );
 
   // 自选状态
   const [favorites, setFavorites] = useState(new Set());
@@ -566,6 +573,9 @@ export default function HomePage() {
       return () => window.removeEventListener('resize', checkMobile);
     }
   }, []);
+
+  const [mobileMainTab, setMobileMainTab] = useState('home');
+  const [portfolioEarningsOpen, setPortfolioEarningsOpen] = useState(false);
 
   const shouldShowMarketIndex = isMobile ? showMarketIndexMobile : showMarketIndexPc;
 
@@ -4755,6 +4765,7 @@ export default function HomePage() {
 
   useEffect(() => {
     const isAnyModalOpen =
+      portfolioEarningsOpen ||
       feedbackOpen ||
       addResultOpen ||
       addFundToGroupOpen ||
@@ -4790,6 +4801,7 @@ export default function HomePage() {
       containerRef.current.style.overflow = '';
     };
   }, [
+    portfolioEarningsOpen,
     feedbackOpen,
     addResultOpen,
     addFundToGroupOpen,
@@ -4831,8 +4843,16 @@ export default function HomePage() {
     return group ? `${group.name}资产` : '分组资产';
   };
 
+  const containerClassName = [
+    'container',
+    isMobile && mobileMainTab === 'mine' ? 'mine-mobile-root' : 'content',
+    isMobile && mobileMainTab === 'home' ? 'content-with-mobile-tabbar' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div ref={containerRef} className="container content" style={{ width: containerWidth }}>
+    <div ref={containerRef} className={containerClassName} style={{ width: containerWidth }}>
       <AnimatePresence>
         {showThemeTransition && (
           <motion.div
@@ -4851,6 +4871,8 @@ export default function HomePage() {
           </motion.div>
         )}
       </AnimatePresence>
+      {(!isMobile || mobileMainTab === 'home') && (
+      <>
       <Announcement />
       <div className="navbar glass" ref={navbarRef}>
         {refreshing && <div className="loading-bar"></div>}
@@ -5766,55 +5788,37 @@ export default function HomePage() {
       </AnimatePresence>
 
       <div className="footer">
-        <p style={{ marginBottom: 8 }}>数据源：实时估值与重仓直连东方财富，仅供个人学习及参考使用。数据可能存在延迟，不作为任何投资建议</p>
-        <p style={{ marginBottom: 12 }}>注：估算数据与真实结算数据会有1%左右误差，非股票型基金误差较大</p>
-        <div style={{ marginTop: 12, opacity: 0.8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-          <p style={{ margin: 0 }}>
-            遇到任何问题或需求建议可
-            <button
-              className="link-button"
-              onClick={() => {
-                if (!user?.id) {
-                  sonnerToast.error('请先登录后再提交反馈');
-                  return;
-                }
-                setFeedbackNonce((n) => n + 1);
-                setFeedbackOpen(true);
-              }}
-              style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: '0 4px', textDecoration: 'underline', fontSize: 'inherit', fontWeight: 600 }}
-            >
-              点此提交反馈
-            </button>
-          </p>
-          <button
-            onClick={() => setDonateOpen(true)}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--muted)',
-              fontSize: '12px',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '4px 8px',
-              borderRadius: '6px',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--primary)';
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--muted)';
-              e.currentTarget.style.background = 'transparent';
-            }}
-          >
-            <span>☕</span>
-            <span>点此请作者喝杯咖啡</span>
-          </button>
-        </div>
       </div>
+      </>
+      )}
+      {isMobile && mobileMainTab === 'mine' && (
+        <MineTab
+          user={user}
+          userAvatar={userAvatar}
+          lastSyncDisplay={lastSyncTime ? dayjs(lastSyncTime).format('MM-DD HH:mm') : null}
+          onLogin={handleOpenLogin}
+          onMyEarnings={() => setPortfolioEarningsOpen(true)}
+          onTutorial={() =>
+            window.open(
+              'https://github.com/hzm0321/real-time-fund/blob/main/README.md',
+              '_blank',
+              'noopener,noreferrer'
+            )
+          }
+          onFeedback={() => {
+            if (!user?.id) {
+              sonnerToast.error('请先登录后再提交反馈');
+              return;
+            }
+            setFeedbackNonce((n) => n + 1);
+            setFeedbackOpen(true);
+          }}
+          onSponsorSupport={() => setDonateOpen(true)}
+        />
+      )}
+      {isMobile && (
+        <MobileBottomNav value={mobileMainTab} onChange={setMobileMainTab} />
+      )}
 
       <AnimatePresence>
         {feedbackOpen && (
@@ -5823,6 +5827,21 @@ export default function HomePage() {
             onClose={() => setFeedbackOpen(false)}
             user={user}
             onOpenWeChat={() => setWeChatOpen(true)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {portfolioEarningsOpen && (
+          <PortfolioEarningsModal
+            key="portfolio-earnings"
+            onClose={() => setPortfolioEarningsOpen(false)}
+            series={portfolioDailySeries}
+            theme={theme}
+            masked={maskAmounts}
+            onGoHome={() => {
+              setPortfolioEarningsOpen(false);
+              setMobileMainTab('home');
+            }}
           />
         )}
       </AnimatePresence>
