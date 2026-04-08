@@ -6376,7 +6376,7 @@ export default function HomePage() {
           onSponsorSupport={() => setDonateOpen(true)}
         />
       )}
-      {isMobile && !isAnyModalOpen && (
+      {isMobile && (
         <MobileBottomNav value={mobileMainTab} onChange={setMobileMainTab} hidden={mobileBottomNavHidden && mobileMainTab === 'home'} />
       )}
 
