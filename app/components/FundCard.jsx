@@ -18,7 +18,11 @@ import {
   StarIcon,
   SwitchIcon,
   TrashIcon,
+  LinkIcon,
 } from './Icons';
+import { Badge } from '@/components/ui/badge';
+import { getTagThemeBadgeProps } from './AddTagDialog';
+import { cn } from '@/lib/utils';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -48,6 +52,7 @@ const formatDisplayDate = (value) => {
 
 export default function FundCard({
   fund: f,
+  isHoldingLinked = false,
   todayStr,
   currentTab,
   favorites,
@@ -63,7 +68,6 @@ export default function FundCard({
   transactions,
   theme,
   isTradingDay,
-  refreshing,
   getHoldingProfit,
   onToggleFavorite,
   onRemoveFund,
@@ -76,6 +80,8 @@ export default function FundCard({
   onToggleEarningsCollapse,
   layoutMode = 'card', // 'card' | 'drawer'，drawer 时前10重仓与业绩走势以 Tabs 展示
   masked = false,
+  fundTags = [],
+  onFundTagsClick,
 }) {
   const holding = holdings[f?.code];
   const profit = getHoldingProfit?.(f, holding) ?? null;
@@ -107,6 +113,19 @@ export default function FundCard({
   }, [dailyEarningsSeries, hasHoldingShare]);
 
   const showFavoriteButton = currentTab === 'all' || currentTab === 'fav';
+  const relatedSectorRaw = f?.relatedSector != null ? String(f.relatedSector).trim() : '';
+  const relatedSectorQuoteName = f?.relatedSectorQuoteName != null
+    ? String(f.relatedSectorQuoteName).trim()
+    : '';
+  const relatedSectorDisplay = relatedSectorQuoteName || relatedSectorRaw;
+  const relatedSectorPctValue = f?.relatedSectorQuotePct == null ? null : Number(f.relatedSectorQuotePct);
+  const hasRelatedSectorPct = relatedSectorPctValue != null && Number.isFinite(relatedSectorPctValue);
+  const relatedSectorPctText = hasRelatedSectorPct
+    ? `${relatedSectorPctValue > 0 ? '+' : ''}${relatedSectorPctValue.toFixed(2)}%`
+    : '';
+
+  const holdingLocked = (currentTab === 'all' || currentTab === 'fav') && isHoldingLinked;
+  const holdingLockedTitle = '持仓来自自定义分组汇总，无法在「全部/自选」设置持仓金额';
 
   const style = layoutMode === 'drawer' ? {
     border: 'none',
@@ -144,12 +163,68 @@ export default function FundCard({
               className="name-text"
               title={f.jzrq === todayStr ? '今日净值已更新' : ''}
             >
+              {isHoldingLinked ? (
+                <span
+                  title="持仓来自自定义分组汇总"
+                  aria-label="已关联持仓"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    marginRight: 6,
+                    color: 'var(--primary)',
+                    verticalAlign: 'middle',
+                    position: 'relative',
+                    bottom: 2,
+                  }}
+                >
+                  <LinkIcon width="14" height="14" />
+                </span>
+              ) : null}
               {f.name}
             </span>
             <span className="muted">
               #{f.code}
               {dcaPlans?.[f.code]?.enabled === true && <span className="dca-indicator">定</span>}
               {f.jzrq === todayStr && <span className="updated-indicator">✓</span>}
+              {fundTags.length > 0 && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    flexWrap: 'wrap',
+                    gap: 2,
+                    marginLeft: 4,
+                    verticalAlign: 'middle',
+                  }}
+                >
+                  {fundTags.map((raw, idx) => {
+                    const item =
+                      raw && typeof raw === 'object' && raw.name != null
+                        ? {
+                            name: String(raw.name).trim(),
+                            theme: String(raw.theme ?? 'default').trim() || 'default',
+                          }
+                        : { name: String(raw).trim(), theme: 'default' };
+                    if (!item.name) return null;
+                    const { variant, className: themeCls } = getTagThemeBadgeProps(item.theme);
+                    return (
+                      <Badge
+                        key={`${item.name}-${idx}`}
+                        variant={variant}
+                        className={cn('font-normal text-[11px]', themeCls)}
+                        style={{ cursor: onFundTagsClick ? 'pointer' : 'default' }}
+                        onClick={(e) => {
+                          if (onFundTagsClick) {
+                            e.stopPropagation?.();
+                            onFundTagsClick(f, fundTags);
+                          }
+                        }}
+                      >
+                        {item.name}
+                      </Badge>
+                    );
+                  })}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -166,14 +241,13 @@ export default function FundCard({
           <div className="row" style={{ gap: 4 }}>
             <button
               className="icon-button danger"
-              onClick={() => !refreshing && onRemoveFund?.(f)}
+              onClick={() => onRemoveFund?.(f)}
               title="删除"
-              disabled={refreshing}
               style={{
                 width: '28px',
                 height: '28px',
-                opacity: refreshing ? 0.6 : 1,
-                cursor: refreshing ? 'not-allowed' : 'pointer',
+                opacity: 1,
+                cursor: 'pointer',
               }}
             >
               <TrashIcon width="14" height="14" />
@@ -249,6 +323,37 @@ export default function FundCard({
         )}
       </div>
 
+      {(relatedSectorDisplay || hasRelatedSectorPct) && (
+        <div className="row" style={{ marginBottom: 12 }}>
+          {relatedSectorDisplay ? (
+            <div className="stat" style={{ flexDirection: 'column', gap: 4, minWidth: 0 }}>
+              <span className="label">关联板块</span>
+              <span
+                className="value"
+                title={relatedSectorDisplay}
+                style={{
+                  fontSize: '15px',
+                  lineHeight: 1.2,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: '100%',
+                }}
+              >
+                {relatedSectorDisplay}
+              </span>
+            </div>
+          ) : null}
+          {hasRelatedSectorPct ? (
+            <Stat
+              label="关联涨幅"
+              value={relatedSectorPctText}
+              delta={relatedSectorPctValue}
+            />
+          ) : null}
+        </div>
+      )}
+
       <div className="row" style={{ marginBottom: 12 }}>
         {!profit ? (
           <div
@@ -263,28 +368,40 @@ export default function FundCard({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 4,
-                cursor: 'pointer',
+                cursor: holdingLocked ? 'not-allowed' : 'pointer',
               }}
-              onClick={() => onHoldingClick?.(f)}
+              title={holdingLocked ? holdingLockedTitle : '设置持仓'}
+              onClick={() => {
+                if (holdingLocked) return;
+                onHoldingClick?.(f);
+              }}
             >
-              未设置  <SettingsIcon width="12" height="12" />
+              未设置 {holdingLocked ? null : <SettingsIcon width="12" height="12" />}
             </div>
           </div>
         ) : (
           <>
             <div
               className="stat"
-              style={{ cursor: 'pointer', flexDirection: 'column', gap: 4 }}
-              onClick={() => onActionClick?.(f)}
+              style={{
+                cursor: holdingLocked ? 'not-allowed' : 'pointer',
+                flexDirection: 'column',
+                gap: 4,
+              }}
+              title={holdingLocked ? holdingLockedTitle : '点击设置持仓'}
+              onClick={() => {
+                if (holdingLocked) return;
+                onActionClick?.(f);
+              }}
             >
               <span
                 className="label"
                 style={{ display: 'flex', alignItems: 'center', gap: 4 }}
               >
-                持仓金额 <SettingsIcon width="12" height="12" style={{ opacity: 0.7 }} />
+                持仓金额 {holdingLocked ? null : <SettingsIcon width="12" height="12" style={{ opacity: 0.7 }} />}
               </span>
               <span className="value">
-                {masked ? '******' : `¥${profit.amount.toFixed(2)}`}
+                {masked ? '******' : `${Number(profit.amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
               </span>
             </div>
             {holding?.firstPurchaseDate && !masked && (() => {
@@ -345,7 +462,7 @@ export default function FundCard({
                                 ? (profit.profitToday / (holding.cost * holding.share)) * 100
                                 : 0,
                             ).toFixed(2)}%`
-                          : `¥${Math.abs(profit.profitToday).toFixed(2)}`}
+                          : `${Math.abs(profit.profitToday).toFixed(2)}`}
                       </>
                   : '--'}
               </span>
@@ -382,7 +499,7 @@ export default function FundCard({
                                 ? (profit.profitTotal / (holding.cost * holding.share)) * 100
                                 : 0,
                             ).toFixed(2)}%`
-                          : `¥${Math.abs(profit.profitTotal).toFixed(2)}`}
+                          : `${Math.abs(profit.profitTotal).toFixed(2)}`}
                       </>}
                 </span>
               </div>

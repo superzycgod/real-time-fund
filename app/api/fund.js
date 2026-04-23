@@ -2,7 +2,8 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import { isString } from 'lodash';
-import { cachedRequest, clearCachedRequest } from '../lib/cacheRequest';
+import { getQueryClient } from '../lib/get-query-client';
+import * as qk from '../lib/query-keys';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 dayjs.extend(utc);
@@ -35,20 +36,23 @@ export const fetchRelatedSectors = async (code, { cacheTime = ONE_DAY_MS, authSe
   if (!isSupabaseConfigured) return '';
 
   const seg = authSegment != null && authSegment !== '' ? String(authSegment) : 'anon';
-  const cacheKey = `relatedSectors:${normalized}:${seg}`;
 
   try {
-    const relatedSectors = await cachedRequest(async () => {
-      const { data, error } = await supabase
-        .from('fund_related')
-        .select('related_sector')
-        .eq('fund_code', normalized)
-        .maybeSingle();
+    const relatedSectors = await getQueryClient().fetchQuery({
+      queryKey: qk.relatedSectors(normalized, seg),
+      queryFn: async () => {
+        const { data, error } = await supabase
+          .from('fund_related')
+          .select('related_sector')
+          .eq('fund_code', normalized)
+          .maybeSingle();
 
-      if (error || !data) return '';
-      const raw = data.related_sector;
-      return raw != null && raw !== '' ? String(raw).trim() : '';
-    }, cacheKey, { cacheTime });
+        if (error || !data) return '';
+        const raw = data.related_sector;
+        return raw != null && raw !== '' ? String(raw).trim() : '';
+      },
+      staleTime: cacheTime,
+    });
 
     return relatedSectors || '';
   } catch (e) {
@@ -65,18 +69,21 @@ export const fetchFundSecidByRelatedSector = async (relatedSector, { cacheTime =
   const normalized = relatedSector != null ? String(relatedSector).trim() : '';
   if (!normalized || !isSupabaseConfigured) return '';
 
-  const cacheKey = `fundSecid:${normalized}`;
   try {
-    const secid = await cachedRequest(async () => {
-      const { data, error } = await supabase
-        .from('fund_secid')
-        .select('secid')
-        .eq('related_sector', normalized)
-        .maybeSingle();
+    const secid = await getQueryClient().fetchQuery({
+      queryKey: qk.fundSecid(normalized),
+      queryFn: async () => {
+        const { data, error } = await supabase
+          .from('fund_secid')
+          .select('secid')
+          .eq('related_sector', normalized)
+          .maybeSingle();
 
-      if (error || !data?.secid) return '';
-      return String(data.secid).trim();
-    }, cacheKey, { cacheTime });
+        if (error || !data?.secid) return '';
+        return String(data.secid).trim();
+      },
+      staleTime: cacheTime,
+    });
 
     return secid || '';
   } catch (e) {
@@ -92,23 +99,26 @@ export const fetchEastmoneySectorQuote = async (secid, { cacheTime = SECTOR_QUOT
   const s = secid != null ? String(secid).trim() : '';
   if (!s || typeof fetch === 'undefined') return null;
 
-  const cacheKey = `eastSectorQuote:${s}`;
   try {
-    const quote = await cachedRequest(async () => {
-      const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(s)}&fields=f58,f57,f43,f170,f169,f124,f86`;
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const json = await res.json();
-      const d = json?.data;
-      if (!d) return null;
-      const f170 = d.f170;
-      const pct = f170 != null && Number.isFinite(Number(f170)) ? Number(f170) / 100 : null;
-      return {
-        name: d.f58 != null ? String(d.f58) : '',
-        code: d.f57 != null ? String(d.f57) : '',
-        pct,
-      };
-    }, cacheKey, { cacheTime });
+    const quote = await getQueryClient().fetchQuery({
+      queryKey: qk.eastSectorQuote(s),
+      queryFn: async () => {
+        const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(s)}&fields=f58,f57,f43,f170,f169,f124,f86`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const json = await res.json();
+        const d = json?.data;
+        if (!d) return null;
+        const f170 = d.f170;
+        const pct = f170 != null && Number.isFinite(Number(f170)) ? Number(f170) / 100 : null;
+        return {
+          name: d.f58 != null ? String(d.f58) : '',
+          code: d.f57 != null ? String(d.f57) : '',
+          pct,
+        };
+      },
+      staleTime: cacheTime,
+    });
 
     return quote || null;
   } catch (e) {
@@ -125,58 +135,68 @@ export const fetchRelatedSectorLiveQuote = async (relatedSectorLabel) => {
   return fetchEastmoneySectorQuote(secid);
 };
 
-export const loadScript = (url) => {
-  if (typeof document === 'undefined' || !document.body) return Promise.resolve(null);
-
-  let cacheKey = url;
+function normalizeEastmoneyScriptUrl(url) {
+  let key = url;
   try {
     const parsed = new URL(url);
     parsed.searchParams.delete('_');
     parsed.searchParams.delete('_t');
-    cacheKey = parsed.toString();
+    key = parsed.toString();
   } catch (e) {
   }
+  return key;
+}
 
-  const cacheTime = 10 * 60 * 1000;
+/** 东方财富 F10 / FundArchives 等 JSONP（window.apidata），不做缓存；由 loadScript / fetchQuery 控制 staleTime */
+function runEastmoneyF10ScriptForApidata(url) {
+  return new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = true;
 
-  return cachedRequest(
-    () =>
-      new Promise((resolve) => {
-        const script = document.createElement('script');
-        script.src = url;
-        script.async = true;
+    const cleanup = () => {
+      if (document.body.contains(script)) document.body.removeChild(script);
+    };
 
-        const cleanup = () => {
-          if (document.body.contains(script)) document.body.removeChild(script);
-        };
+    script.onload = () => {
+      cleanup();
+      let apidata;
+      try {
+        apidata = window?.apidata ? JSON.parse(JSON.stringify(window.apidata)) : undefined;
+      } catch (e) {
+        apidata = window?.apidata;
+      }
+      resolve({ ok: true, apidata });
+    };
 
-        script.onload = () => {
-          cleanup();
-          let apidata;
-          try {
-            apidata = window?.apidata ? JSON.parse(JSON.stringify(window.apidata)) : undefined;
-          } catch (e) {
-            apidata = window?.apidata;
-          }
-          resolve({ ok: true, apidata });
-        };
+    script.onerror = () => {
+      cleanup();
+      resolve({ ok: false, error: '数据加载失败' });
+    };
 
-        script.onerror = () => {
-          cleanup();
-          resolve({ ok: false, error: '数据加载失败' });
-        };
-
-        document.body.appendChild(script);
-      }),
-    cacheKey,
-    { cacheTime }
-  ).then((result) => {
-    if (!result?.ok) {
-      clearCachedRequest(cacheKey);
-      throw new Error(result?.error || '数据加载失败');
-    }
-    return result.apidata;
+    document.body.appendChild(script);
   });
+}
+
+export const loadScript = (url) => {
+  if (typeof document === 'undefined' || !document.body) return Promise.resolve(null);
+
+  const norm = normalizeEastmoneyScriptUrl(url);
+  const qc = getQueryClient();
+
+  return qc
+    .fetchQuery({
+      queryKey: qk.eastmoneyScript(norm),
+      queryFn: () => runEastmoneyF10ScriptForApidata(url),
+      staleTime: 10 * 60 * 1000,
+    })
+    .then((result) => {
+      if (!result?.ok) {
+        qc.removeQueries({ queryKey: qk.eastmoneyScript(norm) });
+        throw new Error(result?.error || '数据加载失败');
+      }
+      return result.apidata;
+    });
 };
 
 export const fetchFundNetValue = async (code, date) => {
@@ -447,67 +467,245 @@ export const fetchFundDataFallback = async (c) => {
   });
 };
 
+// fundgz JSONP 固定回调名为 window.jsonpgz；这里做成“常驻分发器”以支持并发请求，避免覆盖全局回调导致串数据/悬挂。
+const JSONPGZ_DISPATCHER_KEY = '__rtf_jsonpgz_dispatcher_v1__';
+const RTF_FUND_DEBUG_LS_KEY = 'rtf_debug_fund';
+function fundDebugEnabled() {
+  try {
+    // 仅开发环境允许输出调试日志（避免生产环境污染控制台）
+    if (typeof process !== 'undefined' && process?.env?.NODE_ENV === 'production') return false;
+    if (typeof window === 'undefined') return false;
+    const v = window?.localStorage?.getItem(RTF_FUND_DEBUG_LS_KEY);
+    return v === '1' || v === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+function fundDebugLog(...args) {
+  try {
+    if (!fundDebugEnabled()) return;
+     
+    console.debug('[fund][debug]', ...args);
+  } catch (e) {
+  }
+}
+function ensureJsonpgzDispatcher() {
+  if (typeof window === 'undefined') return null;
+  if (window[JSONPGZ_DISPATCHER_KEY]) return window[JSONPGZ_DISPATCHER_KEY];
+
+  const previous = typeof window.jsonpgz === 'function' ? window.jsonpgz : null;
+  const pendingByCode = new Map(); // code -> Set(entry)
+
+  const dispatcher = (json) => {
+    try {
+      if (!json || typeof json !== 'object') {
+        fundDebugLog('jsonpgz called with invalid payload', json);
+        // 部分情况下接口会回调 jsonpgz() 但不给参数（undefined）。
+        // 若当前只有 1 个 pending，可视为该请求失败信号，直接触发其 fallback，避免一直等到超时。
+        if (pendingByCode.size === 1) {
+          const onlyKey = Array.from(pendingByCode.keys())[0];
+          const set = pendingByCode.get(onlyKey);
+          if (set && set.size > 0) {
+            fundDebugLog('jsonpgz invalid payload -> fail single pending', { fundcode: onlyKey, listeners: set.size });
+            pendingByCode.delete(onlyKey);
+            for (const entry of set) {
+              try {
+                entry?.cleanup?.();
+              } catch (e) {
+              }
+              try {
+                entry?.onError?.(new Error('jsonpgz invalid payload'));
+              } catch (e) {
+              }
+            }
+            return;
+          }
+        }
+        if (previous) previous(json);
+        return;
+      }
+      const code = json.fundcode != null ? String(json.fundcode).trim() : '';
+      const set = code ? pendingByCode.get(code) : null;
+      if (!set || set.size === 0) {
+        fundDebugLog('jsonpgz no pending match', { fundcode: code, pendingKeys: Array.from(pendingByCode.keys()) });
+        if (previous) previous(json);
+        return;
+      }
+
+      fundDebugLog('jsonpgz dispatch', { fundcode: code, listeners: set.size });
+      pendingByCode.delete(code);
+      for (const entry of set) {
+        try {
+          entry?.cleanup?.();
+        } catch (e) {
+        }
+        try {
+          entry?.onJson?.(json);
+        } catch (e) {
+          try {
+            entry?.onError?.(e);
+          } catch (e2) {
+          }
+        }
+      }
+    } catch (e) {
+      if (previous) previous(json);
+    }
+  };
+
+  const api = {
+    add(code, entry) {
+      const k = code != null ? String(code).trim() : '';
+      if (!k) return () => {};
+      let set = pendingByCode.get(k);
+      if (!set) {
+        set = new Set();
+        pendingByCode.set(k, set);
+      }
+      set.add(entry);
+      fundDebugLog('jsonpgz add pending', { fundcode: k, pendingCount: set.size });
+      return () => {
+        const cur = pendingByCode.get(k);
+        if (!cur) return;
+        cur.delete(entry);
+        if (cur.size === 0) pendingByCode.delete(k);
+        fundDebugLog('jsonpgz remove pending', { fundcode: k, remaining: cur.size });
+      };
+    },
+    previous,
+  };
+
+  window.jsonpgz = dispatcher;
+  window[JSONPGZ_DISPATCHER_KEY] = api;
+  fundDebugLog('jsonpgz dispatcher installed', { hadPrevious: Boolean(previous) });
+  return api;
+}
+
 export const fetchFundData = async (c) => {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     throw new Error('无浏览器环境');
   }
+  const dispatcher = ensureJsonpgzDispatcher();
+  if (!dispatcher) throw new Error('无浏览器环境');
+
+  const code = c != null ? String(c).trim() : '';
+  if (!code) return fetchFundDataFallback(c);
+
   return new Promise(async (resolve, reject) => {
-    const gzUrl = `https://fundgz.1234567.com.cn/js/${c}.js?rt=${Date.now()}`;
+    fundDebugLog('fetchFundData start', { code });
+    const gzUrl = `https://fundgz.1234567.com.cn/js/${code}.js?rt=${Date.now()}`;
     const scriptGz = document.createElement('script');
     scriptGz.src = gzUrl;
-    const originalJsonpgz = window.jsonpgz;
-    window.jsonpgz = (json) => {
-      window.jsonpgz = originalJsonpgz;
-      if (!json || typeof json !== 'object') {
-        fetchFundDataFallback(c).then(resolve).catch(reject);
-        return;
+    scriptGz.async = true;
+
+    let settled = false;
+    const settleOnce = (fn) => (arg) => {
+      if (settled) return;
+      settled = true;
+      fn(arg);
+    };
+    const safeResolve = settleOnce(resolve);
+    const safeReject = settleOnce(reject);
+
+    const cleanupScript = () => {
+      try {
+        if (timer) clearTimeout(timer);
+      } catch (e) {
       }
-      const gszzlNum = Number(json.gszzl);
-      const gzData = {
-        code: json.fundcode,
-        name: json.name,
-        dwjz: json.dwjz,
-        gsz: json.gsz,
-        gztime: json.gztime,
-        jzrq: json.jzrq,
-        gszzl: Number.isFinite(gszzlNum) ? gszzlNum : json.gszzl
-      };
-      const lsjzPromise = new Promise((resolveT) => {
-        const url = `https://fundf10.eastmoney.com/F10DataApi.aspx?type=lsjz&code=${c}&page=1&per=3&sdate=&edate=`;
-        loadScript(url)
-          .then((apidata) => {
-            const content = apidata?.content || '';
-            const navList = parseNetValuesFromLsjzContent(content);
-            if (navList.length > 0) {
-              const latest = navList[navList.length - 1];
-              const previousNav = navList.length > 1 ? navList[navList.length - 2] : null;
-              const yM = computeYesterdayNavMetricsFromList(navList);
-              resolveT({
-                dwjz: String(latest.nav),
-                zzl: Number.isFinite(latest.growth) ? latest.growth : null,
-                jzrq: latest.date,
-                lastNav: previousNav ? String(previousNav.nav) : null,
-                yesterdayZzl: yM.yesterdayZzl,
-                yesterdayNavDelta: yM.yesterdayNavDelta,
-              });
-            } else {
-              resolveT(null);
-            }
-          })
-          .catch(() => resolveT(null));
-      });
-      const holdingsPromise = new Promise((resolveH) => {
-        const holdingsUrl = `https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=${c}&topline=10&year=&month=&_=${Date.now()}`;
-        const holdingsCacheKey = `fund_holdings_archives_${c}`;
-        cachedRequest(
-          () => loadScript(holdingsUrl),
-          holdingsCacheKey,
-          { cacheTime: 60 * 60 * 1000 }
-        ).then(async (apidata) => {
-          let holdings = [];
-          const html = apidata?.content || '';
-          const holdingsReportDate = extractHoldingsReportDate(html);
-          const holdingsIsLastQuarter = isLastQuarterReport(holdingsReportDate);
+      try {
+        if (document.body && document.body.contains(scriptGz)) document.body.removeChild(scriptGz);
+      } catch (e) {
+      }
+      try {
+        if (removePending) removePending();
+      } catch (e) {
+      }
+    };
+
+    const onTimeout = async () => {
+      fundDebugLog('fetchFundData timeout -> fallback', { code, timeoutMs: 10000 });
+      cleanupScript();
+      try {
+        const r = await fetchFundDataFallback(code);
+        safeResolve(r);
+      } catch (e) {
+        safeReject(e);
+      }
+    };
+
+    const timer = setTimeout(onTimeout, 10000);
+
+    let removePending = null;
+    removePending = dispatcher.add(code, {
+      cleanup: cleanupScript,
+      onJson: async (json) => {
+        // 收到回调即视为成功触发，先清理超时/脚本/pending，再进行后续并行请求
+        fundDebugLog('fetchFundData jsonpgz received', { code, fundcode: json?.fundcode });
+        cleanupScript();
+
+        if (!json || typeof json !== 'object') {
+          fundDebugLog('fetchFundData invalid json -> fallback', { code });
+          try {
+            const r = await fetchFundDataFallback(code);
+            safeResolve(r);
+          } catch (e) {
+            safeReject(e);
+          }
+          return;
+        }
+
+        const gszzlNum = Number(json.gszzl);
+        const gzData = {
+          code: json.fundcode,
+          name: json.name,
+          dwjz: json.dwjz,
+          gsz: json.gsz,
+          gztime: json.gztime,
+          jzrq: json.jzrq,
+          gszzl: Number.isFinite(gszzlNum) ? gszzlNum : json.gszzl
+        };
+        const lsjzPromise = new Promise((resolveT) => {
+          const url = `https://fundf10.eastmoney.com/F10DataApi.aspx?type=lsjz&code=${code}&page=1&per=3&sdate=&edate=`;
+          loadScript(url)
+            .then((apidata) => {
+              const content = apidata?.content || '';
+              const navList = parseNetValuesFromLsjzContent(content);
+              if (navList.length > 0) {
+                const latest = navList[navList.length - 1];
+                const previousNav = navList.length > 1 ? navList[navList.length - 2] : null;
+                const yM = computeYesterdayNavMetricsFromList(navList);
+                resolveT({
+                  dwjz: String(latest.nav),
+                  zzl: Number.isFinite(latest.growth) ? latest.growth : null,
+                  jzrq: latest.date,
+                  lastNav: previousNav ? String(previousNav.nav) : null,
+                  yesterdayZzl: yM.yesterdayZzl,
+                  yesterdayNavDelta: yM.yesterdayNavDelta,
+                });
+              } else {
+                resolveT(null);
+              }
+            })
+            .catch(() => resolveT(null));
+        });
+        const holdingsPromise = new Promise((resolveH) => {
+          fundDebugLog('holdingsPromise start', { code });
+          const holdingsUrl = `https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=${code}&topline=10&year=&month=&_=${Date.now()}`;
+          getQueryClient()
+            .fetchQuery({
+              queryKey: qk.fundHoldingsArchives(code),
+              queryFn: async () => {
+                const r = await runEastmoneyF10ScriptForApidata(holdingsUrl);
+                if (!r?.ok) throw new Error(r?.error || '数据加载失败');
+                return r.apidata;
+              },
+              staleTime: 60 * 60 * 1000,
+            })
+            .then(async (apidata) => {
+            let holdings = [];
+            const html = apidata?.content || '';
+            const holdingsReportDate = extractHoldingsReportDate(html);
+            const holdingsIsLastQuarter = isLastQuarterReport(holdingsReportDate);
 
           // 如果不是上一季度末的披露数据，则不展示重仓（并避免继续解析/请求行情）
           if (!holdingsIsLastQuarter) {
@@ -655,46 +853,64 @@ export const fetchFundData = async (c) => {
             } catch (e) {
             }
           }
-          resolveH({ holdings, holdingsReportDate, holdingsIsLastQuarter });
-        }).catch(() => resolveH({ holdings: [], holdingsReportDate: null, holdingsIsLastQuarter: false }));
-      });
-      Promise.all([lsjzPromise, holdingsPromise]).then(([tData, holdingsResult]) => {
-        const {
-          holdings,
-          holdingsReportDate,
-          holdingsIsLastQuarter
-        } = holdingsResult || {};
-        if (tData) {
-          if (tData.jzrq && (!gzData.jzrq || tData.jzrq >= gzData.jzrq)) {
-            gzData.dwjz = tData.dwjz;
-            gzData.jzrq = tData.jzrq;
-            gzData.zzl = tData.zzl;
-            gzData.lastNav = tData.lastNav;
-          }
-          if (Object.prototype.hasOwnProperty.call(tData, 'yesterdayZzl')) {
-            gzData.yesterdayZzl = tData.yesterdayZzl;
-          }
-          if (Object.prototype.hasOwnProperty.call(tData, 'yesterdayNavDelta')) {
-            gzData.yesterdayNavDelta = tData.yesterdayNavDelta;
-          }
-        }
-        resolve({
-          ...gzData,
-          holdings,
-          holdingsReportDate,
-          holdingsIsLastQuarter
+            resolveH({ holdings, holdingsReportDate, holdingsIsLastQuarter });
+          fundDebugLog('holdingsPromise resolved', { code, holdingsCount: holdings?.length || 0, holdingsReportDate, holdingsIsLastQuarter });
+            })
+            .catch(() => resolveH({ holdings: [], holdingsReportDate: null, holdingsIsLastQuarter: false }));
         });
-      });
+        Promise.all([lsjzPromise, holdingsPromise]).then(([tData, holdingsResult]) => {
+          const {
+            holdings,
+            holdingsReportDate,
+            holdingsIsLastQuarter
+          } = holdingsResult || {};
+          if (tData) {
+            if (tData.jzrq && (!gzData.jzrq || tData.jzrq >= gzData.jzrq)) {
+              gzData.dwjz = tData.dwjz;
+              gzData.jzrq = tData.jzrq;
+              gzData.zzl = tData.zzl;
+              gzData.lastNav = tData.lastNav;
+            }
+            if (Object.prototype.hasOwnProperty.call(tData, 'yesterdayZzl')) {
+              gzData.yesterdayZzl = tData.yesterdayZzl;
+            }
+            if (Object.prototype.hasOwnProperty.call(tData, 'yesterdayNavDelta')) {
+              gzData.yesterdayNavDelta = tData.yesterdayNavDelta;
+            }
+          }
+          safeResolve({
+            ...gzData,
+            holdings,
+            holdingsReportDate,
+            holdingsIsLastQuarter
+          });
+        });
+      },
+      onError: async () => {
+        fundDebugLog('fetchFundData onError -> fallback', { code });
+        cleanupScript();
+        try {
+          const r = await fetchFundDataFallback(code);
+          safeResolve(r);
+        } catch (e) {
+          safeReject(e);
+        }
+      },
+    });
+
+    scriptGz.onerror = async () => {
+      fundDebugLog('fetchFundData script error -> fallback', { code, url: gzUrl });
+      cleanupScript();
+      try {
+        const r = await fetchFundDataFallback(code);
+        safeResolve(r);
+      } catch (e) {
+        safeReject(e);
+      }
     };
-    scriptGz.onerror = () => {
-      window.jsonpgz = originalJsonpgz;
-      if (document.body.contains(scriptGz)) document.body.removeChild(scriptGz);
-      reject(new Error('基金数据加载失败'));
-    };
+
     document.body.appendChild(scriptGz);
-    setTimeout(() => {
-      if (document.body.contains(scriptGz)) document.body.removeChild(scriptGz);
-    }, 5000);
+    fundDebugLog('fetchFundData script appended', { code, url: gzUrl });
   });
 };
 
@@ -798,6 +1014,19 @@ const MARKET_INDEX_KEYS = [
   { code: 'usDJI', varKey: 'v_usDJI', name: '道琼斯' },
   { code: 'hkHSI', varKey: 'v_hkHSI', name: '恒生指数' },
   { code: 'hkHSTECH', varKey: 'v_hkHSTECH', name: '恒生科技指数' },
+
+  // 行 7：欧洲三大股指
+  { code: 'gzFTSE', varKey: 'v_gzFTSE', name: '富时100' },
+  { code: 'gzFCHI', varKey: 'v_gzFCHI', name: 'CAC40' },
+  { code: 'gzGDAXI', varKey: 'v_gzGDAXI', name: '德国DAX' },
+
+  // 行 8：日本股指
+  { code: 'gzN225', varKey: 'v_gzN225', name: '日经225' },
+  { code: 'gzTPX', varKey: 'v_gzTPX', name: '东证指数' },
+
+  // 行 9：韩国股指
+  { code: 'gzKS11', varKey: 'v_gzKS11', name: '韩国综合' },
+  { code: 'gzKOSDAQ', varKey: 'v_gzKOSDAQ', name: '韩国创业板' },
 ];
 
 function parseIndexRaw(data) {
@@ -817,6 +1046,23 @@ function parseIndexRaw(data) {
   };
 }
 
+function parseGlobalIndexRaw(data) {
+  if (!data || typeof data !== 'string') return null;
+  const parts = data.split('~');
+  if (parts.length < 6) return null;
+  const name = parts[1] || '';
+  const price = parseFloat(parts[3], 10);
+  const change = parseFloat(parts[4], 10);
+  const changePercent = parseFloat(parts[5], 10);
+  if (Number.isNaN(price)) return null;
+  return {
+    name,
+    price: Number.isFinite(price) ? price : 0,
+    change: Number.isFinite(change) ? change : 0,
+    changePercent: Number.isFinite(changePercent) ? changePercent : 0,
+  };
+}
+
 export const fetchMarketIndices = async () => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return [];
   return new Promise((resolve, reject) => {
@@ -824,11 +1070,12 @@ export const fetchMarketIndices = async () => {
     const codes = MARKET_INDEX_KEYS.map((item) => item.code).join(',');
     script.src = `https://qt.gtimg.cn/q=${codes}&_t=${Date.now()}`;
     script.onload = () => {
-      const list = MARKET_INDEX_KEYS.map(({ name: defaultName, varKey }) => {
+      const list = MARKET_INDEX_KEYS.map(({ name: defaultName, varKey, code }) => {
         const raw = window[varKey];
-        const parsed = parseIndexRaw(raw);
+        const isGlobal = code.startsWith('gz');
+        const parsed = isGlobal ? parseGlobalIndexRaw(raw) : parseIndexRaw(raw);
         if (!parsed) return { name: defaultName, code: '', price: 0, change: 0, changePercent: 0 };
-        return { ...parsed, code: varKey.replace('v_', '') };
+        return { ...parsed, name: defaultName, code: varKey.replace('v_', '') };
       });
       if (document.body.contains(script)) document.body.removeChild(script);
       resolve(list);
@@ -983,16 +1230,17 @@ export const fetchFundPingzhongdata = async (fundCode, { cacheTime = 60 * 60 * 1
     throw new Error('无浏览器环境');
   }
 
-  const cacheKey = `pingzhongdata_${fundCode}`;
+  const qc = getQueryClient();
+  const key = qk.pingzhongdata(fundCode);
 
   try {
-    return await cachedRequest(
-      () => fetchAndParsePingzhongdata(fundCode),
-      cacheKey,
-      { cacheTime }
-    );
+    return await qc.fetchQuery({
+      queryKey: key,
+      queryFn: () => fetchAndParsePingzhongdata(fundCode),
+      staleTime: cacheTime,
+    });
   } catch (e) {
-    clearCachedRequest(cacheKey);
+    qc.removeQueries({ queryKey: key });
     throw e;
   }
 };
@@ -1131,46 +1379,22 @@ export const fetchFundHistory = async (code, range = '1m') => {
   return [];
 };
 
-const API_KEYS = [
-  'sk-80bcd8ff8ef1445d9154e083e50f07f7',
-  'sk-3ac5fb4f738f042d50c4f64d0c88067f'
-  // 添加更多 API Key 到这里
-];
-
-// 随机从数组中选择一个 API Key
-const getRandomApiKey = () => {
-  if (!API_KEYS.length) return null;
-  return API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
-};
-
 export const parseFundTextWithLLM = async (text) => {
-  const apiKey = getRandomApiKey();
-  if (!apiKey || !text) return null;
+  if (!text) return null;
+  if (!isSupabaseConfigured) return null;
+  if (!supabase?.functions?.invoke) return null;
 
   try {
-    const response = await fetch('https://apis.iflow.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'qwen3-max',
-        messages: [
-          { role: 'system', content: "你是一个基金文本解析助手。请从提供的OCR文本中执行以下任务：\n抽取所有基金信息，包括：基金名称：中文字符串（可含英文或括号），名称后常跟随金额数字。基金代码：6位数字（如果存在）。持有金额：数字格式（可能含千分位逗号或小数，如果存在）。持有收益：数字格式（可能含千分位逗号或小数，如果存在）。忽略无关文本。输出格式：以JSON数组形式返回结果，每个基金信息为一个对象，包含以下字段：基金名称（必填，字符串）基金代码（可选，字符串，不存在时为空字符串）持有金额（可选，字符串，不存在时为空字符串）持有收益（可选，字符串，不存在时为空字符串）示例输出：[{'fundName':'华夏成长混合','fundCode':'000001','holdAmounts':'50,000.00','holdGains':'2,500.00'},{'fundName':'易方达消费行业','fundCode':'','holdAmounts':'10,000.00','holdGains':'}]。除了示例输出的内容外，不要输出任何多余内容"},
-          { role: 'user', content: text }
-        ],
-        temperature: 0.3,
-        max_tokens: 2000
-      })
+    const { data, error } = await supabase.functions.invoke('analyze-fund', {
+      body: { text }
     });
 
-    if (!response.ok) {
-      return null;
-    }
+    if (error) return null;
+    if (!data || data.success !== true) return null;
+    if (!Array.isArray(data.data)) return null;
 
-    const data = await response.json();
-    return data?.choices?.[0]?.message?.content || null;
+    // 保持与旧实现兼容：返回 JSON 字符串，由调用方 JSON.parse
+    return JSON.stringify(data.data);
   } catch (e) {
     return null;
   }

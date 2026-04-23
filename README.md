@@ -68,7 +68,8 @@
   - `NEXT_PUBLIC_Supabase_ANON_KEY`：Supabase 匿名公钥
   - `NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY`：Web3Forms Access Key
   - `NEXT_PUBLIC_GA_ID`：Google Analytics Measurement ID（如 `G-xxxx`）
-  - `NEXT_PUBLIC_GITHUB_LATEST_RELEASE_URL`：GitHub 最新 Release 接口地址，用于在页面中展示“发现新版本”提示（如：`https://api.github.com/repos/hzm0321/real-time-fund/releases/latest`）
+  - `NEXT_PUBLIC_GITHUB_LATEST_RELEASE_URL`：GitHub 最新 Release 接口地址，用于在页面中展示"发现新版本"提示（如：`https://api.github.com/repos/hzm0321/real-time-fund/releases/latest`）
+  - `NEXT_PUBLIC_IS_GITHUB_LOGIN`：控制是否开启 GitHub OAuth 登录功能，可选值 `true` / `false`（默认 `false`）
 
 注：如不使用登录、反馈或 GA 统计功能，可不设置对应变量
 
@@ -147,8 +148,47 @@
    - 启用行级安全（RLS），确保用户只能访问自己的数据
    - 创建 SELECT / INSERT / UPDATE 策略
    - 创建 `update_user_config_partial` 函数（用于增量更新配置）
+   - 创建 `supabase_realtime` Publication（开启对 `user_configs` 表的实时变更监听）
 
    执行成功后，可在 Table Editor 中看到 `user_configs` 表。
+
+8. 导入关联板块数据（可选）
+
+   项目支持展示基金追踪的关联板块（如指数、行业板块）及其实时涨跌幅。该功能依赖两张数据表：
+   - `fund_related`：基金代码 → 关联板块名称映射
+   - `fund_secid`：关联板块名称 → 东方财富 secid 映射
+
+   这两张表已在 `/doc/supabase.sql` 中创建，数据源位于 `/doc` 目录：
+   - `fund_tracking_targets.csv`：基金追踪目标数据
+   - `related_sector_secid.csv`：关联板块 secid 映射数据
+
+   **导入步骤：**
+   - Supabase控制台 → Table Editor → 选择 `fund_related` 表
+   - 点击右上角 **Insert** → **Import data from CSV**
+   - 上传 `fund_tracking_targets.csv` 文件，确认列映射后点击 **Import**
+   - 同理，向 `fund_secid` 表导入 `related_sector_secid.csv` 文件
+
+   导入成功后，基金卡片将展示其追踪的关联板块及实时涨跌幅。
+
+9. 部署 Supabase Edge Function（可选）
+
+   本项目 OCR 识别基金截图功能依赖第三方模型接口，已封装为 Supabase Edge Function 以隐藏 API Key 并避免跨域问题。大模型服务赞助商为 [AINX](https://api.ainx.cc/)。
+
+   **配置步骤：**
+   - 需要用户已登录（函数会读取请求头 `Authorization`，并通过 `supabase.auth.getUser()` 校验 JWT）
+   - 进入 **Supabase 控制台** → 选择你的项目
+   - 左侧菜单找到 **Project Settings**（项目设置）
+   - 点击 **Edge Functions** 选项卡
+   - 在 **Functions** 区域点击 **Develop a new function** → **Via Editor**
+   - 输入函数名称 `analyze-fund`和复制 `doc/edgeFunction/analyze-fund.ts` 内容到编辑器中，点击 **Create**
+   - 到该函数的 Settings 页，取消 **Verify JWT with legacy secret** 选项
+   - 在 **Secrets** 区域点击 **Add a new secret**
+   - Name 填入 `AINX_API_KEY`，Value 填入你从 [AINX 控制台](https://console.ainx.cc/token) 申请的 Key
+   - 点击 **保存** 即可
+
+   **常见排查：**
+   - 401 Unauthorized：说明当前未登录或未携带用户 JWT（先完成 Supabase 登录流程）
+   - 500 / "模型未返回合法 JSON"：通常是第三方模型接口返回格式异常或 Key 无效
 
 更多 Supabase 相关内容查阅官方文档。
 
@@ -156,7 +196,7 @@
 
 本项目已配置 GitHub Actions。每次推送到 `main` 分支时，会自动执行构建并部署到 GitHub Pages。
 如需使用 GitHub Actions 部署，请在 GitHub 项目 Settings → Secrets and variables → Actions 中创建对应的 Repository secrets（字段名称与 `.env.local` 保持一致）。
-包括：`NEXT_PUBLIC_Supabase_URL`、`NEXT_PUBLIC_Supabase_ANON_KEY`、`NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY`、`NEXT_PUBLIC_GA_ID`、`NEXT_PUBLIC_GITHUB_LATEST_RELEASE_URL`。
+包括：`NEXT_PUBLIC_Supabase_URL`、`NEXT_PUBLIC_Supabase_ANON_KEY`、`NEXT_PUBLIC_WEB3FORMS_ACCESS_KEY`、`NEXT_PUBLIC_GA_ID`、`NEXT_PUBLIC_GITHUB_LATEST_RELEASE_URL`、`NEXT_PUBLIC_IS_GITHUB_LOGIN`。
 
 若要手动构建：
 ```bash

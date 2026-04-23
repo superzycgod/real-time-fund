@@ -4,9 +4,11 @@ import { useEffect, useState, useRef } from 'react';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import { RotateCcw } from 'lucide-react';
 import { DatePicker, NumericInput } from './Common';
 import { isNumber } from 'lodash';
 import { CloseIcon } from './Icons';
+import ConfirmModal from './ConfirmModal';
 import {
   Dialog,
   DialogContent,
@@ -81,11 +83,21 @@ const computeFirstDate = (cycle, weeklyDay, monthlyDay) => {
   return formatDate(today);
 };
 
-export default function DcaModal({ fund, plan, onClose, onConfirm }) {
+const resolveDailyFirstDate = (savedFirstDate) => {
+  const autoFirstDate = computeFirstDate('daily');
+  if (!savedFirstDate) return autoFirstDate;
+
+  return dayjs.tz(savedFirstDate, TZ).isAfter(dayjs.tz(autoFirstDate, TZ))
+    ? savedFirstDate
+    : autoFirstDate;
+};
+
+export default function DcaModal({ fund, plan, onClose, onConfirm, onReset }) {
   const [amount, setAmount] = useState('');
   const [feeRate, setFeeRate] = useState('0');
   const [cycle, setCycle] = useState('monthly');
   const [enabled, setEnabled] = useState(true);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [weeklyDay, setWeeklyDay] = useState(() => {
     const d = nowInTz().day();
     return d >= 1 && d <= 5 ? d : 1;
@@ -96,8 +108,10 @@ export default function DcaModal({ fund, plan, onClose, onConfirm }) {
   });
   const [firstDate, setFirstDate] = useState(() => computeFirstDate('monthly', null, null));
   const monthlyDayRef = useRef(null);
+  const skipNextAutoComputeRef = useRef(false);
 
   useEffect(() => {
+    skipNextAutoComputeRef.current = true;
     if (!plan) {
       // 新建定投时，以当前默认 weeklyDay/monthlyDay 计算一次首扣日期
       setFirstDate(computeFirstDate('monthly', weeklyDay, monthlyDay));
@@ -120,13 +134,22 @@ export default function DcaModal({ fund, plan, onClose, onConfirm }) {
     }
     if (plan.cycle && CYCLES.some(c => c.value === plan.cycle)) {
       setCycle(plan.cycle);
-      setFirstDate(plan.firstDate || computeFirstDate(plan.cycle, plan.weeklyDay, plan.monthlyDay));
+      setFirstDate(
+        plan.cycle === 'daily'
+          ? resolveDailyFirstDate(plan.firstDate)
+          : (plan.firstDate || computeFirstDate(plan.cycle, plan.weeklyDay, plan.monthlyDay))
+      );
     } else {
       setFirstDate(plan.firstDate || computeFirstDate('monthly', null, null));
     }
   }, [plan]);
 
   useEffect(() => {
+    if (skipNextAutoComputeRef.current) {
+      skipNextAutoComputeRef.current = false;
+      return;
+    }
+    if (cycle === 'daily') return;
     setFirstDate(computeFirstDate(cycle, weeklyDay, monthlyDay));
   }, [cycle, weeklyDay, monthlyDay]);
 
@@ -181,38 +204,72 @@ export default function DcaModal({ fund, plan, onClose, onConfirm }) {
   };
 
   return (
-    <Dialog open onOpenChange={handleOpenChange}>
-      <DialogContent
-        showCloseButton={false}
-        className="glass card modal dca-modal"
-        overlayClassName="modal-overlay"
-        style={{
-          maxWidth: '420px',
-          maxHeight: '90vh',
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 999,
-          width: '90vw',
-        }}
-      >
-        <DialogTitle className="sr-only">定投设置</DialogTitle>
-        <div
-          className="scrollbar-y-styled"
+    <>
+      {resetConfirmOpen && (
+        <ConfirmModal
+          title="重置定投数据"
+          message={`是否重置「${fund?.name || fund?.code || '该基金'}」在当前分组下的定投数据？确认后将清除该基金在当前分组内的定投设置。`}
+          icon={<RotateCcw width="20" height="20" className="shrink-0 text-[var(--primary)]" />}
+          confirmText="确认重置"
+          confirmVariant="danger"
+          onCancel={() => setResetConfirmOpen(false)}
+          onConfirm={() => {
+            setResetConfirmOpen(false);
+            // 由父级负责清除“当前分组-该基金”的定投数据
+            onReset?.(fund?.code);
+          }}
+        />
+      )}
+      <Dialog open onOpenChange={handleOpenChange}>
+        <DialogContent
+          showCloseButton={false}
+          className="glass card modal dca-modal"
+          overlayClassName="modal-overlay"
           style={{
-            overflowY: 'auto',
-            paddingRight: 4,
-            flex: 1,
+            maxWidth: '420px',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            zIndex: 999,
+            width: '90vw',
           }}
         >
-          <div className="title" style={{ marginBottom: 20, justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: '20px' }}>🔁</span>
-              <span>定投</span>
+          <DialogTitle className="sr-only">定投设置</DialogTitle>
+          <div
+            className="scrollbar-y-styled"
+            style={{
+              overflowY: 'auto',
+              paddingRight: 4,
+              flex: 1,
+            }}
+          >
+            <div className="title" style={{ marginBottom: 20, justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: '20px' }}>🔁</span>
+                <span>定投</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setResetConfirmOpen(true)}
+                  disabled={!plan}
+                  title={plan ? '重置当前分组定投数据' : '暂无定投数据可重置'}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--primary)',
+                    opacity: plan ? 1 : 0.4,
+                    cursor: plan ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  <RotateCcw width="18" height="18" />
+                </button>
+                <button className="icon-button" onClick={onClose} style={{ border: 'none', background: 'transparent' }}>
+                  <CloseIcon width="20" height="20" />
+                </button>
+              </div>
             </div>
-            <button className="icon-button" onClick={onClose} style={{ border: 'none', background: 'transparent' }}>
-              <CloseIcon width="20" height="20" />
-            </button>
-          </div>
 
           <div style={{ marginBottom: 16 }}>
             <div className="fund-name" style={{ fontWeight: 600, fontSize: '16px', marginBottom: 4 }}>{fund?.name}</div>
@@ -247,7 +304,7 @@ export default function DcaModal({ fund, plan, onClose, onConfirm }) {
 
             <div className="form-group" style={{ marginBottom: 16 }}>
               <label className="muted" style={{ display: 'block', marginBottom: 8, fontSize: '14px' }}>
-                定投金额 (¥) <span style={{ color: 'var(--danger)' }}>*</span>
+                定投金额 <span style={{ color: 'var(--danger)' }}>*</span>
               </label>
               <div style={{ border: (!amount || parseFloat(amount) <= 0) ? '1px solid var(--danger)' : '1px solid var(--border)', borderRadius: 12 }}>
                 <NumericInput
@@ -343,11 +400,17 @@ export default function DcaModal({ fund, plan, onClose, onConfirm }) {
               <label className="muted" style={{ display: 'block', marginBottom: 4, fontSize: '14px' }}>
                 首次扣款日期
               </label>
-              <div className="dca-first-date-display">
-                {firstDate}
-              </div>
+              {cycle === 'daily' ? (
+                <DatePicker value={firstDate} onChange={setFirstDate} minDate={nowInTz().format('YYYY-MM-DD')} />
+              ) : (
+                <div className="dca-first-date-display">
+                  {firstDate}
+                </div>
+              )}
               <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-                * 基于当前日期和所选周期/扣款日自动计算：每日=当天；每周/每两周=从今天起最近的所选工作日；每月=从今天起最近的所选日期（1-28日）。
+                {cycle === 'daily'
+                  ? '* 选择首次扣款日期（不能晚于今天）'
+                  : '* 基于当前日期和所选周期/扣款日自动计算：每日=当天；每周/每两周=从今天起最近的所选工作日；每月=从今天起最近的所选日期（1-28日）。'}
               </div>
             </div>
           </form>
@@ -378,8 +441,9 @@ export default function DcaModal({ fund, plan, onClose, onConfirm }) {
             </button>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

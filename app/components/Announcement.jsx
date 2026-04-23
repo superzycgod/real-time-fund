@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const ANNOUNCEMENT_KEY = 'hasClosedAnnouncement_v21';
+const ANNOUNCEMENT_KEY = 'hasClosedAnnouncement_v1.3.1';
 
 export default function Announcement() {
   const [isVisible, setIsVisible] = useState(false);
@@ -75,15 +75,12 @@ export default function Announcement() {
               <span>公告</span>
             </div>
             <div style={{ color: 'var(--text)', lineHeight: '1.6', fontSize: '15px', overflowY: 'auto', minHeight: 0, flex: 1, paddingRight: '4px' }}>
-              <p>v1.0.0 迎来比较大的变化,更新内容如下：</p>
-              <p>1. 完善关联板块及板块估值数据。</p>
-              <p>2. 分组持仓数据独立。</p>
-              <p>3. 新增底部导航栏。</p>
-              <p>4. 新增我的收益展示。</p>
-              <p>5. 新增昨日收益、近1周、近一月等列。</p>
-              <p>6. 新增移动端批量删除(长按表格行触发)。</p>
-              <br/>
-              <p>该版本调整较多,如有建议和问题，欢迎进用户支持群反馈。</p>
+              <p>v1.3.1 更新内容如下：</p>
+              <p>1. 更换截图识别 ai 方案。</p>
+              <p>2. 修复分组新建、删除问题。</p>
+              <p>3. 修复移动端管理分组二次确认弹框层级问题。</p>
+              <p>4. 基金卡片、添加分组展示基金标签。</p>
+              <p>5. 定投弹框新增重置按钮。</p>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
