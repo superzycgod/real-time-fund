@@ -70,11 +70,13 @@ real-time-fund/
 - **Static export** — `output: 'export'` in next.config.js. No server-side runtime.
 - **JSONP + script injection** — all external API calls bypass CORS via `<script>` tags, not fetch().
 - **localStorage-first** — all user data stored locally; Supabase sync is optional/secondary.
+- **Unified Data Access** — **Strict Requirement**: ALL `localStorage` reads and writes MUST go through `storageStore` (or `useStorageStore` in React). Never use `window.localStorage` directly for business data to ensure state synchronization, cloud sync triggering, and data integrity (e.g., automatic JSON parsing/stringifying).
 - **Monolithic page.jsx** — entire app state and logic in one file (~3000+ lines). No state management library.
 - **Dual responsive layouts** — `PcFundTable` and `MobileFundTable` switch at 640px breakpoint.
 - **shadcn/ui conventions** — new-york style, CSS variables enabled, Lucide icons, path aliases (`@/components`, `@/lib/utils`).
 - **Linting only** — ESLint + lint-staged on pre-commit. No Prettier, no auto-formatting.
 - **React Compiler** — `reactCompiler: true` in next.config.js (experimental auto-memoization).
+- **单位规范（px/rem）** — PC 端（`> 640px`）使用 `px`；全局（media query 外）的 `px` 由 `postcss-pxtorem`（`rootValue: 16`，`mediaQuery: false`）自动转换为 `rem`，PC 端 `html { font-size: 16px }` 保证 rem 与原 px 视觉完全一致。`@media (max-width: 640px)` 块**内**的 `px` 保留不转。移动端 `html { font-size: clamp(13px, 3.84vw, 16px) }` 让全局 rem 值随视口弹性缩放。`1px` 边框（`minPixelValue: 2`）保留为 px。如需阻止某个值被转换，使用大写 `PX` 书写。
 
 ## ANTI-PATTERNS (THIS PROJECT)
 
